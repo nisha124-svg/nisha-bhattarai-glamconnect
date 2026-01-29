@@ -9,6 +9,9 @@
         "build": "tsc",
         "seed": "ts-node src/seed.ts"
     },
+    "prisma": {
+        "seed": "ts-node src/seed.ts"
+    },
     "dependencies": {
         "@prisma/client": "^5.10.2",
         "bcryptjs": "^2.4.3",

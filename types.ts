@@ -56,5 +56,6 @@ export enum PageView {
   BOOKING_SUCCESS = 'BOOKING_SUCCESS',
   OFFERS = 'OFFERS',
   BLOG = 'BLOG',
-  AUTH = 'AUTH'
+  AUTH = 'AUTH',
+  ADMIN = 'ADMIN'
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Menu, X, User, Heart, Sparkles, LayoutDashboard, ChevronDown, LogOut } from 'lucide-react';
+import { Menu, X, User, Heart, Sparkles, LayoutDashboard, ChevronDown, LogOut, Shield } from 'lucide-react';
 import { PageView } from '../types';
 
 interface LayoutProps {
@@ -102,6 +102,15 @@ export const Layout: React.FC<LayoutProps> = ({ children, setCurrentPage, curren
                   title="Salon Dashboard"
                 >
                   <LayoutDashboard className="h-6 w-6" />
+                </button>
+              )}
+              {user && user.role === 'ADMIN' && (
+                <button 
+                  onClick={() => setCurrentPage(PageView.ADMIN)}
+                  className={`p-2 rounded-full transition ${currentPage === PageView.ADMIN ? 'text-purple-600 bg-purple-50' : 'text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}
+                  title="Admin Panel"
+                >
+                  <Shield className="h-6 w-6" />
                 </button>
               )}
               <button className="p-2 rounded-full text-gray-500 hover:text-pink-600 hover:bg-pink-50 transition">

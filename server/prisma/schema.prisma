@@ -8,18 +8,24 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String
-  role      Role     @default(USER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password      String
+  name          String
+  phone         String?
+  role          Role     @default(USER)
+  loyaltyPoints Int      @default(0)
+  totalSpent    Float    @default(0)
+  membershipTier String  @default("BASIC") // BASIC, SILVER, GOLD, PLATINUM
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
   
   appointments     Appointment[]
   reviews          Review[]
   notifications    Notification[]
   customerHistory  CustomerHistory[]
+  ownedSalons      Salon[]
+  loyaltyHistory   LoyaltyTransaction[]
 }
 
 model Salon {
@@ -32,6 +38,12 @@ model Salon {
   tags        String[]
   rating      Float    @default(0)
   reviewCount Int      @default(0)
+  isVerified  Boolean  @default(false)
+  ownerId     String?
+  owner       User?    @relation(fields: [ownerId], references: [id])
+  latitude    Float?
+  longitude   Float?
+  city        String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -160,6 +172,26 @@ model StaffSchedule {
   updatedAt  DateTime @updatedAt
 
   @@unique([stylistId, dayOfWeek])
+}
+
+// Loyalty Points Transaction History
+model LoyaltyTransaction {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  points      Int      // Positive for earned, negative for redeemed
+  type        LoyaltyType
+  description String?
+  appointmentId String?
+  createdAt   DateTime @default(now())
+}
+
+enum LoyaltyType {
+  EARNED
+  REDEEMED
+  BONUS
+  EXPIRED
+  REFERRAL
 }
 
 enum Role {

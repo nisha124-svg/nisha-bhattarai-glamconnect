@@ -184,4 +184,146 @@ router.post('/verify', authenticate, (req: AuthRequest, res: Response) => {
   res.json({ valid: true, userId: req.userId });
 });
 
+/**
+ * Google OAuth Login/Register
+ * POST /api/auth/google
+ * Accepts Google OAuth token and creates/logs in user
+ */
+router.post('/google', async (req: Request, res: Response) => {
+  try {
+    const { token, email, name, googleId } = req.body;
+
+    if (!email || !name || !googleId) {
+      return res.status(400).json({ message: 'Google authentication data is required' });
+    }
+
+    const sanitizedEmail = sanitizeInput(email).toLowerCase();
+    const sanitizedName = sanitizeInput(name);
+
+    // Check if user exists with this email
+    let user = await prisma.user.findUnique({
+      where: { email: sanitizedEmail }
+    });
+
+    if (user) {
+      // User exists - log them in
+      // Update their name if it changed
+      if (user.name !== sanitizedName) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { name: sanitizedName }
+        });
+      }
+    } else {
+      // Create new user with Google OAuth
+      // Generate a random password hash (user won't use it for login)
+      const randomPassword = await bcrypt.hash(googleId + Date.now(), 12);
+      
+      user = await prisma.user.create({
+        data: {
+          email: sanitizedEmail,
+          password: randomPassword,
+          name: sanitizedName,
+          role: Role.USER
+        }
+      });
+    }
+
+    // Generate JWT token
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      console.error('JWT_SECRET is not defined');
+      return res.status(500).json({ message: 'Server configuration error' });
+    }
+
+    const tokenPayload: TokenPayload = { userId: user.id, role: user.role };
+    const jwtToken = jwt.sign(tokenPayload, secret, { expiresIn: '7d' });
+
+    const response: AuthResponse = {
+      token: jwtToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('Google OAuth error:', error);
+    res.status(500).json({ message: 'Error with Google authentication. Please try again.' });
+  }
+});
+
+/**
+ * Facebook OAuth Login/Register
+ * POST /api/auth/facebook
+ * Accepts Facebook OAuth token and creates/logs in user
+ */
+router.post('/facebook', async (req: Request, res: Response) => {
+  try {
+    const { token, email, name, facebookId } = req.body;
+
+    if (!email || !name || !facebookId) {
+      return res.status(400).json({ message: 'Facebook authentication data is required' });
+    }
+
+    const sanitizedEmail = sanitizeInput(email).toLowerCase();
+    const sanitizedName = sanitizeInput(name);
+
+    // Check if user exists with this email
+    let user = await prisma.user.findUnique({
+      where: { email: sanitizedEmail }
+    });
+
+    if (user) {
+      // User exists - log them in
+      if (user.name !== sanitizedName) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { name: sanitizedName }
+        });
+      }
+    } else {
+      // Create new user with Facebook OAuth
+      const randomPassword = await bcrypt.hash(facebookId + Date.now(), 12);
+      
+      user = await prisma.user.create({
+        data: {
+          email: sanitizedEmail,
+          password: randomPassword,
+          name: sanitizedName,
+          role: Role.USER
+        }
+      });
+    }
+
+    // Generate JWT token
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      console.error('JWT_SECRET is not defined');
+      return res.status(500).json({ message: 'Server configuration error' });
+    }
+
+    const tokenPayload: TokenPayload = { userId: user.id, role: user.role };
+    const jwtToken = jwt.sign(tokenPayload, secret, { expiresIn: '7d' });
+
+    const response: AuthResponse = {
+      token: jwtToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('Facebook OAuth error:', error);
+    res.status(500).json({ message: 'Error with Facebook authentication. Please try again.' });
+  }
+});
+
 export default router;

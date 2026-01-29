@@ -1,14 +1,34 @@
-import React from 'react';
-import { Search, MapPin, Star, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, MapPin, Star, ChevronRight, Loader2 } from 'lucide-react';
 import { Button } from '../components/Button';
-import { CATEGORIES, MOCK_SALONS } from '../constants';
-import { PageView } from '../types';
+import { CATEGORIES } from '../constants';
+import { PageView, Salon } from '../types';
+import { salons as salonApi } from '../api/client';
 
 interface LandingPageProps {
   onNavigate: (page: PageView) => void;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
+  const [featuredSalons, setFeaturedSalons] = useState<Salon[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchSalons = async () => {
+      try {
+        const response = await salonApi.getAll();
+        // Get top 3 salons by rating
+        const topSalons = response.data.slice(0, 3);
+        setFeaturedSalons(topSalons);
+      } catch (error) {
+        console.error('Error fetching salons:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSalons();
+  }, []);
+
   return (
     <div className="flex flex-col">
       {/* Hero Section */}
@@ -101,7 +121,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {MOCK_SALONS.slice(0, 3).map((salon) => (
+            {loading ? (
+              <div className="col-span-3 flex justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-pink-500" />
+              </div>
+            ) : featuredSalons.map((salon) => (
               <div 
                 key={salon.id} 
                 onClick={() => onNavigate(PageView.SALON_LIST)}

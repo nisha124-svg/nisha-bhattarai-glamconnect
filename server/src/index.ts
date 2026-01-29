@@ -10,6 +10,10 @@ import dashboardRoutes from './routes/dashboard.routes';
 import serviceRoutes from './routes/service.routes';
 import customerRoutes from './routes/customer.routes';
 import promoRoutes from './routes/promo.routes';
+import adminRoutes from './routes/admin.routes';
+import paymentRoutes from './routes/payment.routes';
+import loyaltyRoutes from './routes/loyalty.routes';
+import membershipRoutes from './routes/membership.routes';
 
 dotenv.config();
 
@@ -35,6 +39,10 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/promos', promoRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/loyalty', loyaltyRoutes);
+app.use('/api/membership', membershipRoutes);
 
 // Socket.io connection
 io.on('connection', (socket) => {

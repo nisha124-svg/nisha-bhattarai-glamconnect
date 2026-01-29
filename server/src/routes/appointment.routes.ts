@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import prisma from '../config/database';
 import { sendBookingConfirmation } from '../services/email.service';
+import { sendBookingSMS, sendCancellationSMS, sendRescheduleSMS } from '../services/sms.service';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 
 const router = Router();
@@ -60,7 +61,7 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
         salon: true,
         service: true,
         stylist: true,
-        user: { select: { name: true, email: true } }
+        user: { select: { name: true, email: true, phone: true } }
       }
     });
 
@@ -86,6 +87,21 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
     } catch (emailError) {
       console.error('Failed to send confirmation email:', emailError);
       // Don't fail the request if email fails
+    }
+
+    // Send SMS confirmation if phone number is available
+    if (appointment.user.phone) {
+      try {
+        await sendBookingSMS(appointment.user.phone, {
+          userName: appointment.user.name,
+          serviceName: appointment.service.name,
+          salonName: appointment.salon.name,
+          date: appointment.date,
+          price: appointment.price
+        });
+      } catch (smsError) {
+        console.error('Failed to send confirmation SMS:', smsError);
+      }
     }
 
     res.status(201).json(appointment);
@@ -166,6 +182,194 @@ router.patch('/:id/cancel', authenticate, async (req: AuthRequest, res: Response
   } catch (error) {
     console.error('Error cancelling appointment:', error);
     res.status(500).json({ message: 'Error cancelling appointment. Please try again.' });
+  }
+});
+
+/**
+ * Reschedule an appointment
+ * PATCH /api/appointments/:id/reschedule
+ */
+router.patch('/:id/reschedule', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { newDate, newStylistId } = req.body;
+
+    if (!req.userId) {
+      return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    if (!newDate) {
+      return res.status(400).json({ message: 'New date is required' });
+    }
+
+    // Validate that the new date is in the future
+    const newAppointmentDate = new Date(newDate);
+    if (newAppointmentDate < new Date()) {
+      return res.status(400).json({ message: 'New appointment date must be in the future' });
+    }
+
+    // Check if appointment exists and belongs to user
+    const appointment = await prisma.appointment.findUnique({
+      where: { id },
+      include: { salon: true, service: true, stylist: true, user: { select: { name: true, email: true } } }
+    });
+
+    if (!appointment) {
+      return res.status(404).json({ message: 'Appointment not found' });
+    }
+
+    if (appointment.userId !== req.userId) {
+      return res.status(403).json({ message: 'Unauthorized to reschedule this appointment' });
+    }
+
+    if (appointment.status === 'CANCELLED') {
+      return res.status(400).json({ message: 'Cannot reschedule a cancelled appointment' });
+    }
+
+    if (appointment.status === 'COMPLETED') {
+      return res.status(400).json({ message: 'Cannot reschedule a completed appointment' });
+    }
+
+    // If new stylist is provided, verify they exist and belong to the same salon
+    let stylistId = appointment.stylistId;
+    if (newStylistId && newStylistId !== appointment.stylistId) {
+      const newStylist = await prisma.stylist.findUnique({
+        where: { id: newStylistId }
+      });
+
+      if (!newStylist) {
+        return res.status(404).json({ message: 'Stylist not found' });
+      }
+
+      if (newStylist.salonId !== appointment.salonId) {
+        return res.status(400).json({ message: 'Stylist does not belong to this salon' });
+      }
+
+      stylistId = newStylistId;
+    }
+
+    // Check for conflicting appointments for the stylist
+    const conflictingAppointment = await prisma.appointment.findFirst({
+      where: {
+        stylistId,
+        date: newAppointmentDate,
+        status: { not: 'CANCELLED' },
+        id: { not: id }
+      }
+    });
+
+    if (conflictingAppointment) {
+      return res.status(409).json({ message: 'The selected time slot is not available. Please choose a different time.' });
+    }
+
+    // Update appointment
+    const updatedAppointment = await prisma.appointment.update({
+      where: { id },
+      data: {
+        date: newAppointmentDate,
+        stylistId
+      },
+      include: {
+        salon: true,
+        service: true,
+        stylist: true,
+        user: { select: { name: true, email: true } }
+      }
+    });
+
+    // Emit socket event for real-time notification
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('booking_rescheduled', {
+        serviceName: updatedAppointment.service.name,
+        userName: updatedAppointment.user.name,
+        oldDate: appointment.date,
+        newDate: updatedAppointment.date
+      });
+    }
+
+    // Send email notification about rescheduling
+    try {
+      await sendBookingConfirmation(updatedAppointment.user.email, {
+        userName: updatedAppointment.user.name,
+        serviceName: `${updatedAppointment.service.name} (Rescheduled)`,
+        salonName: updatedAppointment.salon.name,
+        date: updatedAppointment.date,
+        price: updatedAppointment.price
+      });
+    } catch (emailError) {
+      console.error('Failed to send rescheduling email:', emailError);
+    }
+
+    res.json({
+      message: 'Appointment rescheduled successfully',
+      appointment: updatedAppointment
+    });
+  } catch (error) {
+    console.error('Error rescheduling appointment:', error);
+    res.status(500).json({ message: 'Error rescheduling appointment. Please try again.' });
+  }
+});
+
+/**
+ * Get available time slots for a stylist on a specific date
+ * GET /api/appointments/available-slots
+ */
+router.get('/available-slots', async (req, res) => {
+  try {
+    const { stylistId, date, salonId } = req.query;
+
+    if (!stylistId || !date || !salonId) {
+      return res.status(400).json({ message: 'stylistId, date, and salonId are required' });
+    }
+
+    const queryDate = new Date(date as string);
+    const startOfDay = new Date(queryDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(queryDate.setHours(23, 59, 59, 999));
+
+    // Get all appointments for the stylist on this date
+    const existingAppointments = await prisma.appointment.findMany({
+      where: {
+        stylistId: stylistId as string,
+        salonId: salonId as string,
+        date: {
+          gte: startOfDay,
+          lte: endOfDay
+        },
+        status: { not: 'CANCELLED' }
+      },
+      orderBy: { date: 'asc' }
+    });
+
+    // Generate time slots (9 AM to 7 PM, 1-hour slots)
+    const allSlots: { time: string; display: string; available: boolean }[] = [];
+    for (let hour = 9; hour <= 18; hour++) {
+      const slotTime = new Date(startOfDay);
+      slotTime.setHours(hour, 0, 0, 0);
+      allSlots.push({
+        time: slotTime.toISOString(),
+        display: `${hour > 12 ? hour - 12 : hour}:00 ${hour >= 12 ? 'PM' : 'AM'}`,
+        available: true
+      });
+    }
+
+    // Mark booked slots as unavailable
+    existingAppointments.forEach(appt => {
+      const apptHour = new Date(appt.date).getHours();
+      const slotIndex = allSlots.findIndex(slot => new Date(slot.time).getHours() === apptHour);
+      if (slotIndex !== -1) {
+        allSlots[slotIndex].available = false;
+      }
+    });
+
+    res.json({
+      date: date,
+      stylistId,
+      slots: allSlots
+    });
+  } catch (error) {
+    console.error('Error fetching available slots:', error);
+    res.status(500).json({ message: 'Error fetching available slots. Please try again.' });
   }
 });
 

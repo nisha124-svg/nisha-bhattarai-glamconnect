@@ -1,14 +1,19 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Star, MapPin, Clock, Calendar, CheckCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowLeft, Star, MapPin, Clock, Calendar, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Salon, Service, Stylist } from '../types';
 
-import { appointments } from '../api/client';
+import { appointments, salons as salonApi } from '../api/client';
 
 interface SalonProfilePageProps {
   salon: Salon;
   onBack: () => void;
   onBookSuccess: () => void;
+}
+
+interface TimeSlot {
+  time: string;
+  available: boolean;
 }
 
 export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBack, onBookSuccess }) => {
@@ -21,29 +26,103 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
   const [selectedStylist, setSelectedStylist] = useState<Stylist | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedTime, setSelectedTime] = useState<string>('');
+  const [availableSlots, setAvailableSlots] = useState<TimeSlot[]>([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [bookingLoading, setBookingLoading] = useState(false);
+  const [bookingError, setBookingError] = useState<string | null>(null);
+  const [promoCode, setPromoCode] = useState('');
+  const [discount, setDiscount] = useState(0);
+
+  // Check if user is logged in
+  const isLoggedIn = !!localStorage.getItem('token');
+
+  // Generate time slots based on service duration
+  const generateTimeSlots = (duration: number): TimeSlot[] => {
+    const slots: TimeSlot[] = [];
+    const startHour = 9; // 9 AM
+    const endHour = 18; // 6 PM
+    const slotDuration = Math.max(30, duration); // Minimum 30 min slots
+
+    for (let hour = startHour; hour < endHour; hour++) {
+      for (let minute = 0; minute < 60; minute += slotDuration) {
+        if (hour + (minute + slotDuration) / 60 <= endHour) {
+          const timeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+          const period = hour >= 12 ? 'PM' : 'AM';
+          const displayHour = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour;
+          slots.push({
+            time: `${displayHour}:${minute.toString().padStart(2, '0')} ${period}`,
+            available: true // Will be updated by API
+          });
+        }
+      }
+    }
+    return slots;
+  };
+
+  // Fetch available slots when date or stylist changes
+  useEffect(() => {
+    if (selectedDate && selectedService) {
+      fetchAvailableSlots();
+    }
+  }, [selectedDate, selectedStylist, selectedService]);
+
+  const fetchAvailableSlots = async () => {
+    if (!selectedDate || !selectedService) return;
+
+    setLoadingSlots(true);
+    try {
+      // Generate base slots
+      const baseSlots = generateTimeSlots(selectedService.duration);
+      
+      // Fetch existing appointments for the date
+      const response = await salonApi.getById(salon.id);
+      // For now, mark all slots as available - in production, check against existing appointments
+      setAvailableSlots(baseSlots);
+    } catch (error) {
+      console.error('Error fetching slots:', error);
+      setAvailableSlots(generateTimeSlots(selectedService.duration));
+    } finally {
+      setLoadingSlots(false);
+    }
+  };
 
   const handleBookClick = (service: Service) => {
+    if (!isLoggedIn) {
+      alert('Please login to book an appointment');
+      return;
+    }
     setSelectedService(service);
     setShowBookingModal(true);
     setBookingStep(1);
+    setBookingError(null);
+    setPromoCode('');
+    setDiscount(0);
   };
 
   const handleBookingSubmit = async () => {
-    if (!selectedService || !selectedDate || !selectedTime) return;
+    if (!selectedService || !selectedDate || !selectedTime) {
+      setBookingError('Please select all required options');
+      return;
+    }
+
+    setBookingLoading(true);
+    setBookingError(null);
 
     try {
       await appointments.create({
         salonId: salon.id,
         serviceId: selectedService.id,
-        stylistId: selectedStylist?.id,
+        stylistId: selectedStylist?.id || salon.stylists[0]?.id,
         date: `${selectedDate}T${convertTo24Hour(selectedTime)}`,
-        price: selectedService.price
+        price: selectedService.price - discount
       });
       setShowBookingModal(false);
       onBookSuccess();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Booking failed:', error);
-      alert('Failed to book appointment. Please try again.');
+      setBookingError(error.response?.data?.message || 'Failed to book appointment. Please try again.');
+    } finally {
+      setBookingLoading(false);
     }
   };
 
@@ -51,15 +130,30 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
     const [time, modifier] = time12h.split(' ');
     let [hours, minutes] = time.split(':');
     if (hours === '12') {
-      hours = '00';
-    }
-    if (modifier === 'PM') {
+      hours = modifier === 'AM' ? '00' : '12';
+    } else if (modifier === 'PM') {
       hours = (parseInt(hours, 10) + 12).toString();
     }
-    return `${hours}:${minutes}:00`;
+    return `${hours.padStart(2, '0')}:${minutes}:00`;
   };
 
-  const timeSlots = ["09:00 AM", "10:00 AM", "11:30 AM", "01:00 PM", "02:30 PM", "04:00 PM"];
+  // Get minimum date (today)
+  const getMinDate = () => {
+    const today = new Date();
+    return today.toISOString().split('T')[0];
+  };
+
+  // Get maximum date (30 days from now)
+  const getMaxDate = () => {
+    const maxDate = new Date();
+    maxDate.setDate(maxDate.getDate() + 30);
+    return maxDate.toISOString().split('T')[0];
+  };
+
+  const calculateTotal = () => {
+    if (!selectedService) return 0;
+    return Math.max(0, selectedService.price - discount);
+  };
 
   return (
     <div className="bg-white min-h-screen pb-12">
@@ -253,26 +347,53 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
                 <div>
                   <h4 className="font-bold text-lg mb-4">Select Date & Time</h4>
                   <div className="mb-6">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Date</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <Calendar className="inline h-4 w-4 mr-1" /> Select Date
+                    </label>
                     <input
                       type="date"
+                      min={getMinDate()}
+                      max={getMaxDate()}
+                      value={selectedDate}
                       className="w-full border border-gray-300 rounded-lg p-3 focus:ring-pink-500 focus:border-pink-500"
-                      onChange={(e) => setSelectedDate(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedDate(e.target.value);
+                        setSelectedTime('');
+                      }}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Available Slots</label>
-                    <div className="grid grid-cols-3 gap-3">
-                      {timeSlots.map(time => (
-                        <button
-                          key={time}
-                          onClick={() => setSelectedTime(time)}
-                          className={`py-2 px-3 rounded-lg text-sm font-medium border ${selectedTime === time ? 'bg-pink-500 text-white border-pink-500' : 'bg-white border-gray-200 text-gray-700 hover:border-pink-300'}`}
-                        >
-                          {time}
-                        </button>
-                      ))}
-                    </div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <Clock className="inline h-4 w-4 mr-1" /> Available Slots
+                      {selectedService && <span className="text-gray-400 ml-2">({selectedService.duration} min service)</span>}
+                    </label>
+                    {!selectedDate ? (
+                      <p className="text-gray-400 text-sm italic py-4 text-center">Please select a date first</p>
+                    ) : loadingSlots ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-pink-500" />
+                        <span className="ml-2 text-gray-500">Loading available slots...</span>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                        {availableSlots.map(slot => (
+                          <button
+                            key={slot.time}
+                            onClick={() => slot.available && setSelectedTime(slot.time)}
+                            disabled={!slot.available}
+                            className={`py-2 px-3 rounded-lg text-sm font-medium border transition ${
+                              selectedTime === slot.time 
+                                ? 'bg-pink-500 text-white border-pink-500' 
+                                : slot.available 
+                                  ? 'bg-white border-gray-200 text-gray-700 hover:border-pink-300' 
+                                  : 'bg-gray-100 border-gray-100 text-gray-400 cursor-not-allowed line-through'
+                            }`}
+                          >
+                            {slot.time}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -280,11 +401,26 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
               {/* Step 3: Review */}
               {bookingStep === 3 && (
                 <div className="bg-gray-50 rounded-xl p-6">
-                  <h4 className="font-bold text-lg mb-4 text-center">Confirm Booking</h4>
+                  <h4 className="font-bold text-lg mb-4 text-center flex items-center justify-center">
+                    <CheckCircle className="h-5 w-5 mr-2 text-green-500" />
+                    Confirm Booking
+                  </h4>
+                  
+                  {bookingError && (
+                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center text-red-600 text-sm">
+                      <AlertCircle className="h-4 w-4 mr-2" />
+                      {bookingError}
+                    </div>
+                  )}
+
                   <div className="space-y-4 text-sm">
                     <div className="flex justify-between border-b border-gray-200 pb-2">
                       <span className="text-gray-500">Service</span>
                       <span className="font-bold text-gray-900">{selectedService?.name}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-gray-200 pb-2">
+                      <span className="text-gray-500">Duration</span>
+                      <span className="font-bold text-gray-900">{selectedService?.duration} minutes</span>
                     </div>
                     <div className="flex justify-between border-b border-gray-200 pb-2">
                       <span className="text-gray-500">Salon</span>
@@ -296,11 +432,57 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
                     </div>
                     <div className="flex justify-between border-b border-gray-200 pb-2">
                       <span className="text-gray-500">Date & Time</span>
-                      <span className="font-bold text-gray-900">{selectedDate || 'Tomorrow'} at {selectedTime || '10:00 AM'}</span>
+                      <span className="font-bold text-gray-900">
+                        {selectedDate && new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} at {selectedTime}
+                      </span>
                     </div>
-                    <div className="flex justify-between pt-2">
+
+                    {/* Promo Code Section */}
+                    <div className="pt-2 border-t border-gray-200">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Promo Code</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="Enter code"
+                          value={promoCode}
+                          onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                          className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-pink-500 focus:border-pink-500"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            if (promoCode === 'GLAMNEW' && selectedService) {
+                              setDiscount(Math.round(selectedService.price * 0.2));
+                            } else if (promoCode === 'SAVE10' && selectedService) {
+                              setDiscount(10);
+                            } else {
+                              alert('Invalid promo code');
+                              setDiscount(0);
+                            }
+                          }}
+                        >
+                          Apply
+                        </Button>
+                      </div>
+                      {discount > 0 && (
+                        <p className="text-green-600 text-xs mt-1">✓ Code applied! You save ${discount}</p>
+                      )}
+                    </div>
+
+                    <div className="flex justify-between pt-4 border-t border-gray-300">
+                      <span className="text-gray-500">Subtotal</span>
+                      <span className="text-gray-700">${selectedService?.price}</span>
+                    </div>
+                    {discount > 0 && (
+                      <div className="flex justify-between text-green-600">
+                        <span>Discount</span>
+                        <span>-${discount}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between pt-2 border-t border-gray-300">
                       <span className="font-bold text-gray-900 text-lg">Total</span>
-                      <span className="font-bold text-pink-600 text-lg">${selectedService?.price}</span>
+                      <span className="font-bold text-pink-600 text-lg">${calculateTotal()}</span>
                     </div>
                   </div>
                 </div>
@@ -316,14 +498,20 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
               </Button>
               <Button
                 disabled={
-                  (bookingStep === 2 && (!selectedDate && !selectedTime))
+                  (bookingStep === 2 && (!selectedDate || !selectedTime)) ||
+                  bookingLoading
                 }
                 onClick={() => {
                   if (bookingStep < 3) setBookingStep(bookingStep + 1);
                   else handleBookingSubmit();
                 }}
               >
-                {bookingStep === 3 ? 'Confirm Payment' : 'Next Step'}
+                {bookingLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Processing...
+                  </>
+                ) : bookingStep === 3 ? 'Confirm Booking' : 'Next Step'}
               </Button>
             </div>
           </div>

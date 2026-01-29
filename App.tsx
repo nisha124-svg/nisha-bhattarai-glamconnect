@@ -7,6 +7,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { OffersPage } from './pages/OffersPage';
 import { BlogPage } from './pages/BlogPage';
 import { AuthPage } from './pages/AuthPage';
+import { AdminPage } from './pages/AdminPage';
 import { BeautyAssistant } from './components/BeautyAssistant';
 import { Salon, PageView } from './types';
 import { CheckCircle } from 'lucide-react';
@@ -84,6 +85,19 @@ const App: React.FC = () => {
 
       case PageView.AUTH:
         return <AuthPage onLoginSuccess={(page) => handleSetCurrentPage(page)} />;
+
+      case PageView.ADMIN:
+        // Only admins can access admin panel
+        const adminUserStr = localStorage.getItem('user');
+        if (adminUserStr) {
+          const adminUser = JSON.parse(adminUserStr);
+          if (adminUser.role === 'ADMIN') {
+            return <AdminPage />;
+          }
+        }
+        // Redirect non-admins to home
+        handleSetCurrentPage(PageView.LANDING);
+        return <LandingPage onNavigate={handleSetCurrentPage} />;
 
       case PageView.BOOKING_SUCCESS:
         return (

@@ -50,9 +50,25 @@ interface RegisterData {
   role?: 'USER' | 'ADMIN' | 'SALON_OWNER';
 }
 
+interface GoogleAuthData {
+  token: string;
+  email: string;
+  name: string;
+  googleId: string;
+}
+
+interface FacebookAuthData {
+  token: string;
+  email: string;
+  name: string;
+  facebookId: string;
+}
+
 export const auth = {
   login: (credentials: LoginCredentials) => api.post('/auth/login', credentials),
   register: (data: RegisterData) => api.post('/auth/register', data),
+  googleLogin: (data: GoogleAuthData) => api.post('/auth/google', data),
+  facebookLogin: (data: FacebookAuthData) => api.post('/auth/facebook', data),
   getProfile: () => api.get('/auth/me'),
   verifyToken: () => api.post('/auth/verify'),
 };
@@ -61,12 +77,32 @@ export const salons = {
   getAll: () => api.get('/salons'),
   getById: (id: string) => api.get(`/salons/${id}`),
   search: (query: string) => api.get(`/salons/search/query?q=${encodeURIComponent(query)}`),
+  filter: (filters: {
+    query?: string;
+    serviceTypes?: string[];
+    minRating?: number;
+    priceMin?: number;
+    priceMax?: number;
+    sortBy?: 'rating' | 'price' | 'name' | 'reviewCount';
+    sortOrder?: 'asc' | 'desc';
+  }) => api.post('/salons/filter', filters),
+  getFeatured: () => api.get('/salons/featured/list'),
+  getByCategory: (category: string) => api.get(`/salons/category/${category}`),
+  getNearby: (lat: number, lng: number, radius?: number, limit?: number) => 
+    api.get(`/salons/nearby?lat=${lat}&lng=${lng}${radius ? `&radius=${radius}` : ''}${limit ? `&limit=${limit}` : ''}`),
+  getByCity: (cityName: string) => api.get(`/salons/city/${encodeURIComponent(cityName)}`),
+  updateLocation: (id: string, data: { latitude: number; longitude: number; city?: string }) => 
+    api.put(`/salons/${id}/location`, data),
 };
 
 export const appointments = {
   create: (data: any) => api.post('/appointments', data),
   getMy: () => api.get('/appointments/my-appointments'),
   cancel: (id: string) => api.patch(`/appointments/${id}/cancel`),
+  reschedule: (id: string, data: { newDate: string; newStylistId?: string }) => 
+    api.patch(`/appointments/${id}/reschedule`, data),
+  getAvailableSlots: (stylistId: string, date: string, salonId: string) => 
+    api.get(`/appointments/available-slots?stylistId=${stylistId}&date=${date}&salonId=${salonId}`),
 };
 
 // Dashboard Analytics API
@@ -99,6 +135,71 @@ export const promos = {
   delete: (id: string) => api.delete(`/promos/${id}`),
   validate: (code: string, salonId: string, purchaseAmount: number) => 
     api.post('/promos/validate', { code, salonId, purchaseAmount }),
+};
+
+// Admin API
+export const admin = {
+  // Statistics
+  getStats: () => api.get('/admin/stats'),
+  
+  // User Management
+  getUsers: (params?: { role?: string; search?: string; page?: number; limit?: number }) => 
+    api.get('/admin/users', { params }),
+  updateUserRole: (userId: string, role: string) => 
+    api.put(`/admin/users/${userId}/role`, { role }),
+  
+  // Salon Management
+  getSalons: (params?: { status?: string; search?: string; page?: number; limit?: number }) => 
+    api.get('/admin/salons', { params }),
+  approveSalon: (salonId: string) => 
+    api.put(`/admin/salons/${salonId}/approve`),
+  suspendSalon: (salonId: string, reason?: string) => 
+    api.put(`/admin/salons/${salonId}/suspend`, { reason }),
+  
+  // Booking Management
+  getBookings: (params?: { status?: string; search?: string; page?: number; limit?: number }) => 
+    api.get('/admin/bookings', { params }),
+  updateBookingStatus: (bookingId: string, status: string) => 
+    api.put(`/admin/bookings/${bookingId}/status`, { status }),
+  
+  // Settings
+  getSettings: () => api.get('/admin/settings'),
+  updateSettings: (settings: any) => api.put('/admin/settings', settings),
+};
+
+// Payment API
+export const payments = {
+  createIntent: (data: { appointmentId?: string; amount: number; currency?: string }) => 
+    api.post('/payments/create-intent', data),
+  confirm: (data: { paymentIntentId: string; appointmentId?: string }) => 
+    api.post('/payments/confirm', data),
+  getHistory: () => api.get('/payments/history'),
+  refund: (data: { paymentIntentId?: string; appointmentId?: string; reason?: string }) => 
+    api.post('/payments/refund', data),
+};
+
+// Loyalty Program API
+export const loyalty = {
+  getStatus: () => api.get('/loyalty/status'),
+  getHistory: () => api.get('/loyalty/history'),
+  earn: (data: { amount: number; appointmentId?: string }) => 
+    api.post('/loyalty/earn', data),
+  redeem: (data: { points: number; appointmentId?: string }) => 
+    api.post('/loyalty/redeem', data),
+  getInfo: () => api.get('/loyalty/info'),
+};
+
+// Membership API
+export const membership = {
+  getPlans: () => api.get('/membership/plans'),
+  getStatus: () => api.get('/membership/status'),
+  upgrade: (data: { targetTier: string; paymentMethod?: string }) => 
+    api.post('/membership/upgrade', data),
+  downgrade: (data: { targetTier: string }) => 
+    api.post('/membership/downgrade', data),
+  getBenefits: () => api.get('/membership/benefits'),
+  calculateDiscount: (originalPrice: number) => 
+    api.post('/membership/calculate-discount', { originalPrice }),
 };
 
 export default api;

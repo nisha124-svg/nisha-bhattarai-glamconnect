@@ -1,0 +1,5 @@
+Admin:        admin@glamconnect.com / admin123
+Salon Owner:  priya@luxesalon.com / password123
+Salon Owner:  maya@blushstudio.com / password123
+Salon Owner:  anjali@zenbeauty.com / password123
+Customer:     emma.wilson@gmail.com / password12
