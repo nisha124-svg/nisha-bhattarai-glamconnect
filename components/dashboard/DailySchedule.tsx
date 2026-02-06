@@ -245,9 +245,11 @@ export const DailySchedule: React.FC = () => {
 
 const AppointmentCard: React.FC<{ appointment: Appointment }> = ({ appointment }) => {
   const statusColors: Record<string, string> = {
+    PENDING: 'bg-amber-100 border-amber-300 text-amber-800',
     CONFIRMED: 'bg-blue-100 border-blue-300 text-blue-800',
     COMPLETED: 'bg-green-100 border-green-300 text-green-800',
     CANCELLED: 'bg-red-100 border-red-300 text-red-800',
+    REJECTED: 'bg-red-100 border-red-300 text-red-700',
   };
 
   return (

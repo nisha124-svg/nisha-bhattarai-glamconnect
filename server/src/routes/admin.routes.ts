@@ -1,9 +1,8 @@
 import { Router, Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../config/database';
 import { authMiddleware, adminOnly } from '../middleware/auth.middleware';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Get platform statistics (admin only)
 router.get('/stats', authMiddleware, adminOnly, async (req: Request, res: Response) => {
@@ -13,6 +12,7 @@ router.get('/stats', authMiddleware, adminOnly, async (req: Request, res: Respon
       totalSalons,
       totalAppointments,
       pendingSalons,
+      pendingOwners,
       recentUsers,
       recentAppointments
     ] = await Promise.all([
@@ -20,6 +20,7 @@ router.get('/stats', authMiddleware, adminOnly, async (req: Request, res: Respon
       prisma.salon.count(),
       prisma.appointment.count(),
       prisma.salon.count({ where: { isVerified: false } }),
+      prisma.user.count({ where: { role: 'SALON_OWNER', isApproved: false } }),
       prisma.user.findMany({
         take: 10,
         orderBy: { createdAt: 'desc' },
@@ -54,6 +55,7 @@ router.get('/stats', authMiddleware, adminOnly, async (req: Request, res: Respon
         totalSalons,
         totalAppointments,
         pendingSalons,
+        pendingOwners,
         totalRevenue
       },
       recentUsers,
@@ -88,6 +90,7 @@ router.get('/users', authMiddleware, adminOnly, async (req: Request, res: Respon
         name: true,
         email: true,
         role: true,
+        isApproved: true,
         createdAt: true,
         _count: {
           select: { appointments: true }
@@ -102,7 +105,7 @@ router.get('/users', authMiddleware, adminOnly, async (req: Request, res: Respon
       users: users.map(u => ({
         ...u,
         totalBookings: u._count.appointments,
-        status: 'active' // In real app, add status field to User model
+        status: u.role === 'SALON_OWNER' && !u.isApproved ? 'pending' : 'active'
       })),
       pagination: {
         page: Number(page),
@@ -340,6 +343,163 @@ router.put('/settings', authMiddleware, adminOnly, async (req: Request, res: Res
   const settings = req.body;
   // In a real app, save these to the database
   res.json({ message: 'Settings updated', settings });
+});
+
+// Get pending salon owners (admin only)
+router.get('/pending-owners', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const pendingOwners = await prisma.user.findMany({
+      where: { role: 'SALON_OWNER', isApproved: false },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        createdAt: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json(pendingOwners);
+  } catch (error) {
+    console.error('Error fetching pending owners:', error);
+    res.status(500).json({ message: 'Error fetching pending salon owners' });
+  }
+});
+
+// Approve salon owner (admin only)
+router.put('/users/:id/approve', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const user = await prisma.user.update({
+      where: { id },
+      data: { isApproved: true },
+      select: { id: true, name: true, email: true, role: true, isApproved: true }
+    });
+
+    res.json({ message: `Salon owner "${user.name}" has been approved. They can now log in and set up their salon.`, user });
+  } catch (error) {
+    console.error('Error approving salon owner:', error);
+    res.status(500).json({ message: 'Error approving salon owner' });
+  }
+});
+
+// Reject/remove salon owner (admin only)
+router.put('/users/:id/reject', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    // Demote back to regular USER and mark approved (so they can use the platform as a customer)
+    const user = await prisma.user.update({
+      where: { id },
+      data: { role: 'USER', isApproved: true },
+      select: { id: true, name: true, email: true, role: true, isApproved: true }
+    });
+
+    res.json({ message: `Salon owner request from "${user.name}" has been rejected. Account converted to regular user.`, user, reason });
+  } catch (error) {
+    console.error('Error rejecting salon owner:', error);
+    res.status(500).json({ message: 'Error rejecting salon owner' });
+  }
+});
+
+// Delete a user and all related data (admin only)
+router.delete('/users/:id', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Prevent admin from deleting themselves
+    if (id === (req as any).userId) {
+      return res.status(400).json({ message: 'You cannot delete your own account.' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Cascade delete all related records in a transaction
+    await prisma.$transaction(async (tx) => {
+      // Delete loyalty transactions
+      await tx.loyaltyTransaction.deleteMany({ where: { userId: id } });
+      // Delete notifications
+      await tx.notification.deleteMany({ where: { userId: id } });
+      // Delete customer history
+      await tx.customerHistory.deleteMany({ where: { userId: id } });
+      // Delete reviews
+      await tx.review.deleteMany({ where: { userId: id } });
+      // Delete appointments
+      await tx.appointment.deleteMany({ where: { userId: id } });
+
+      // If salon owner, delete their salons and all salon data
+      if (user.role === 'SALON_OWNER') {
+        const ownedSalons = await tx.salon.findMany({ where: { ownerId: id } });
+        for (const salon of ownedSalons) {
+          await tx.appointment.deleteMany({ where: { salonId: salon.id } });
+          await tx.review.deleteMany({ where: { salonId: salon.id } });
+          await tx.customerHistory.deleteMany({ where: { salonId: salon.id } });
+          await tx.promoCode.deleteMany({ where: { salonId: salon.id } });
+          // Delete staff schedules for stylists
+          const stylists = await tx.stylist.findMany({ where: { salonId: salon.id } });
+          for (const stylist of stylists) {
+            await tx.staffSchedule.deleteMany({ where: { stylistId: stylist.id } });
+          }
+          await tx.stylist.deleteMany({ where: { salonId: salon.id } });
+          await tx.service.deleteMany({ where: { salonId: salon.id } });
+        }
+        await tx.salon.deleteMany({ where: { ownerId: id } });
+      }
+
+      // Delete the user
+      await tx.user.delete({ where: { id } });
+    });
+
+    res.json({ message: `User "${user.name}" and all related data have been deleted.` });
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    res.status(500).json({ message: 'Error deleting user' });
+  }
+});
+
+// Delete a salon and all related data (admin only)
+router.delete('/salons/:id', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const salon = await prisma.salon.findUnique({ where: { id } });
+    if (!salon) {
+      return res.status(404).json({ message: 'Salon not found' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Delete all appointments for this salon
+      await tx.appointment.deleteMany({ where: { salonId: id } });
+      // Delete reviews
+      await tx.review.deleteMany({ where: { salonId: id } });
+      // Delete customer history
+      await tx.customerHistory.deleteMany({ where: { salonId: id } });
+      // Delete promo codes
+      await tx.promoCode.deleteMany({ where: { salonId: id } });
+      // Delete staff schedules
+      const stylists = await tx.stylist.findMany({ where: { salonId: id } });
+      for (const stylist of stylists) {
+        await tx.staffSchedule.deleteMany({ where: { stylistId: stylist.id } });
+      }
+      // Delete stylists
+      await tx.stylist.deleteMany({ where: { salonId: id } });
+      // Delete services
+      await tx.service.deleteMany({ where: { salonId: id } });
+      // Delete the salon
+      await tx.salon.delete({ where: { id } });
+    });
+
+    res.json({ message: `Salon "${salon.name}" and all related data have been deleted.` });
+  } catch (error) {
+    console.error('Error deleting salon:', error);
+    res.status(500).json({ message: 'Error deleting salon' });
+  }
 });
 
 export default router;

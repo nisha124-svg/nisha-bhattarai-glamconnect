@@ -1,17 +1,18 @@
 import React, { useState } from 'react';
 import { 
   BarChart3, Calendar, Settings, Users, Tag, 
-  LayoutDashboard, ChevronRight 
+  LayoutDashboard, ChevronRight, ClipboardList 
 } from 'lucide-react';
 import { 
   AnalyticsDashboard, 
   DailySchedule, 
   ServiceManagement, 
   CustomerHistory, 
-  PromotionalTools 
+  PromotionalTools,
+  BookingManagement 
 } from '../components/dashboard';
 
-type TabId = 'analytics' | 'schedule' | 'services' | 'customers' | 'promos';
+type TabId = 'analytics' | 'bookings' | 'schedule' | 'services' | 'customers' | 'promos';
 
 interface Tab {
   id: TabId;
@@ -26,6 +27,12 @@ const tabs: Tab[] = [
     label: 'Analytics', 
     icon: <BarChart3 className="h-5 w-5" />,
     description: 'Revenue charts & customer frequency'
+  },
+  { 
+    id: 'bookings', 
+    label: 'Bookings', 
+    icon: <ClipboardList className="h-5 w-5" />,
+    description: 'Accept, reject & complete bookings'
   },
   { 
     id: 'schedule', 
@@ -60,6 +67,8 @@ export const DashboardPage: React.FC = () => {
     switch (activeTab) {
       case 'analytics':
         return <AnalyticsDashboard />;
+      case 'bookings':
+        return <BookingManagement />;
       case 'schedule':
         return <DailySchedule />;
       case 'services':

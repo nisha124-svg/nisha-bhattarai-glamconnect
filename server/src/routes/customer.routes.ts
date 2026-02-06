@@ -19,9 +19,9 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ message: 'Access denied. Salon owners only.' });
     }
 
-    const salon = await prisma.salon.findFirst();
+    const salon = await prisma.salon.findFirst({ where: { ownerId: req.userId } });
     if (!salon) {
-      return res.status(404).json({ message: 'No salon found' });
+      return res.status(404).json({ message: 'No salon found for this owner' });
     }
 
     // Get all customers who have appointments at this salon
@@ -110,9 +110,9 @@ router.get('/:userId', authenticate, async (req: AuthRequest, res: Response) => 
 
     const { userId } = req.params;
 
-    const salon = await prisma.salon.findFirst();
+    const salon = await prisma.salon.findFirst({ where: { ownerId: req.userId } });
     if (!salon) {
-      return res.status(404).json({ message: 'No salon found' });
+      return res.status(404).json({ message: 'No salon found for this owner' });
     }
 
     const customer = await prisma.user.findUnique({
@@ -207,9 +207,9 @@ router.put('/:userId', authenticate, async (req: AuthRequest, res: Response) => 
     const { userId } = req.params;
     const { preferences, allergies, notes } = req.body;
 
-    const salon = await prisma.salon.findFirst();
+    const salon = await prisma.salon.findFirst({ where: { ownerId: req.userId } });
     if (!salon) {
-      return res.status(404).json({ message: 'No salon found' });
+      return res.status(404).json({ message: 'No salon found for this owner' });
     }
 
     const history = await prisma.customerHistory.upsert({

@@ -1,7 +1,154 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../config/database';
+import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 
 const router = Router();
+
+/**
+ * Check if logged-in salon owner already has a salon
+ * GET /api/salons/my-salon
+ */
+router.get('/my-salon', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user || user.role !== 'SALON_OWNER') {
+      return res.status(403).json({ message: 'Access denied. Salon owners only.' });
+    }
+
+    const salon = await prisma.salon.findFirst({
+      where: { ownerId: req.userId },
+      include: { services: true, stylists: true }
+    });
+
+    if (!salon) {
+      return res.json({ hasSalon: false, salon: null });
+    }
+
+    return res.json({ hasSalon: true, salon });
+  } catch (error) {
+    console.error('Error checking salon:', error);
+    res.status(500).json({ message: 'Error checking salon status.' });
+  }
+});
+
+/**
+ * Create/setup a new salon (for newly approved salon owners)
+ * POST /api/salons/setup
+ */
+router.post('/setup', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user || user.role !== 'SALON_OWNER') {
+      return res.status(403).json({ message: 'Access denied. Salon owners only.' });
+    }
+
+    // Check if owner already has a salon
+    const existingSalon = await prisma.salon.findFirst({ where: { ownerId: req.userId } });
+    if (existingSalon) {
+      return res.status(400).json({ message: 'You already have a salon registered.' });
+    }
+
+    const {
+      name,
+      address,
+      description,
+      image,
+      tags,
+      city,
+      latitude,
+      longitude,
+      services,
+      stylists
+    } = req.body;
+
+    if (!name || !address || !description) {
+      return res.status(400).json({ message: 'Salon name, address, and description are required.' });
+    }
+
+    // Create salon with services and stylists in a single transaction
+    const salon = await prisma.$transaction(async (tx) => {
+      const newSalon = await tx.salon.create({
+        data: {
+          name,
+          address,
+          description,
+          image: image || 'https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800',
+          tags: tags || [],
+          city: city || '',
+          latitude: latitude ? parseFloat(latitude) : null,
+          longitude: longitude ? parseFloat(longitude) : null,
+          ownerId: req.userId!,
+          isVerified: false,
+          autoAcceptBookings: true,
+          gallery: [],
+          rating: 0,
+          reviewCount: 0
+        }
+      });
+
+      // Create services if provided
+      if (services && services.length > 0) {
+        await tx.service.createMany({
+          data: services.map((s: any) => ({
+            name: s.name,
+            duration: parseInt(s.duration),
+            price: parseFloat(s.price),
+            category: s.category,
+            salonId: newSalon.id
+          }))
+        });
+      }
+
+      // Create stylists if provided
+      if (stylists && stylists.length > 0) {
+        for (const st of stylists) {
+          const stylist = await tx.stylist.create({
+            data: {
+              name: st.name,
+              role: st.role || 'Stylist',
+              avatar: st.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(st.name)}&background=ec4899&color=fff`,
+              salonId: newSalon.id,
+              rating: 5.0
+            }
+          });
+
+          // Create default schedule for each stylist (Mon-Sat, 9-17)
+          const scheduleData = [];
+          for (let day = 1; day <= 6; day++) {
+            scheduleData.push({
+              stylistId: stylist.id,
+              dayOfWeek: day,
+              startTime: '09:00',
+              endTime: '17:00',
+              isWorking: true
+            });
+          }
+          // Sunday off
+          scheduleData.push({
+            stylistId: stylist.id,
+            dayOfWeek: 0,
+            startTime: '09:00',
+            endTime: '17:00',
+            isWorking: false
+          });
+
+          await tx.staffSchedule.createMany({ data: scheduleData });
+        }
+      }
+
+      // Return the complete salon with relations
+      return tx.salon.findUnique({
+        where: { id: newSalon.id },
+        include: { services: true, stylists: true }
+      });
+    });
+
+    res.status(201).json({ message: 'Salon created successfully!', salon });
+  } catch (error) {
+    console.error('Error setting up salon:', error);
+    res.status(500).json({ message: 'Error setting up salon. Please try again.' });
+  }
+});
 
 /**
  * Get all salons

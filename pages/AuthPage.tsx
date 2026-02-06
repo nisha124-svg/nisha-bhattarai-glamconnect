@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Mail, Lock, User, Eye, EyeOff, Check, Facebook, Chrome } from 'lucide-react';
+import { Mail, Lock, User, Eye, EyeOff, Check, Facebook, Chrome, Clock } from 'lucide-react';
 import { Button } from '../components/Button';
 import { PageView } from '../types';
 
@@ -7,7 +7,7 @@ interface AuthPageProps {
   onLoginSuccess: (page: PageView) => void;
 }
 
-import { auth } from '../api/client';
+import { auth, salons } from '../api/client';
 
 // Declare global for Google OAuth
 declare global {
@@ -22,6 +22,26 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
 
+  // Redirect based on role after login
+  const redirectByRole = async (user: { role: string }) => {
+    if (user.role === 'ADMIN') {
+      onLoginSuccess(PageView.ADMIN);
+    } else if (user.role === 'SALON_OWNER') {
+      try {
+        const res = await salons.getMySalon();
+        if (res.data.hasSalon) {
+          onLoginSuccess(PageView.DASHBOARD);
+        } else {
+          onLoginSuccess(PageView.SALON_SETUP);
+        }
+      } catch {
+        onLoginSuccess(PageView.SALON_SETUP);
+      }
+    } else {
+      onLoginSuccess(PageView.LANDING);
+    }
+  };
+
   // Login Form State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -29,6 +49,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
   const [isSalonOwner, setIsSalonOwner] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [pendingApprovalMessage, setPendingApprovalMessage] = useState('');
 
   // Client-side validation
   const validateEmail = (email: string): boolean => {
@@ -88,7 +109,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
         response = await auth.login({ email, password });
         localStorage.setItem('token', response.data.token);
         localStorage.setItem('user', JSON.stringify(response.data.user));
-        onLoginSuccess(PageView.LANDING);
+        redirectByRole(response.data.user);
       } else {
         response = await auth.register({
           email,
@@ -96,15 +117,27 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
           name,
           role: isSalonOwner ? 'SALON_OWNER' : 'USER'
         });
+        
+        // Check if this is a pending approval response
+        if (response.data.pendingApproval) {
+          setError('');
+          setPendingApprovalMessage(response.data.message);
+          return;
+        }
+        
         // After successful registration, redirect to login
         setIsLogin(true);
         setPassword('');
         setError('');
-        // Show success message
         alert('Account created successfully! Please login to continue.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Authentication failed. Please try again.');
+      if (err.response?.data?.pendingApproval) {
+        setError('');
+        setPendingApprovalMessage(err.response.data.message);
+      } else {
+        setError(err.response?.data?.message || 'Authentication failed. Please try again.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -157,7 +190,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
       const response = await auth.googleLogin(userData);
       localStorage.setItem('token', response.data.token);
       localStorage.setItem('user', JSON.stringify(response.data.user));
-      onLoginSuccess(PageView.LANDING);
+      redirectByRole(response.data.user);
     } catch (err: any) {
       setError(err.response?.data?.message || 'Google authentication failed.');
     } finally {
@@ -212,13 +245,47 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
       const response = await auth.facebookLogin(userData);
       localStorage.setItem('token', response.data.token);
       localStorage.setItem('user', JSON.stringify(response.data.user));
-      onLoginSuccess(PageView.LANDING);
+      redirectByRole(response.data.user);
     } catch (err: any) {
       setError(err.response?.data?.message || 'Facebook authentication failed.');
     } finally {
       setIsLoading(false);
     }
   };
+
+  // Show pending approval screen
+  if (pendingApprovalMessage) {
+    return (
+      <div className="min-h-[calc(100vh-80px)] bg-white flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-md w-full text-center bg-white rounded-3xl shadow-2xl border border-gray-100 p-10">
+          <div className="mx-auto w-20 h-20 rounded-full bg-amber-100 flex items-center justify-center mb-6">
+            <Clock className="h-10 w-10 text-amber-600" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-3">Account Pending Approval</h2>
+          <p className="text-gray-600 mb-6">{pendingApprovalMessage}</p>
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+            <p className="text-sm text-amber-800">
+              <strong>What happens next?</strong><br />
+              Our admin team will review your application and approve your account. Once approved, you'll be able to log in and set up your salon profile.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setPendingApprovalMessage('');
+              setIsLogin(true);
+              setEmail('');
+              setPassword('');
+              setName('');
+              setIsSalonOwner(false);
+            }}
+            className="w-full py-3 px-4 bg-pink-600 text-white rounded-xl font-medium hover:bg-pink-700 transition"
+          >
+            Back to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[calc(100vh-80px)] bg-white flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">

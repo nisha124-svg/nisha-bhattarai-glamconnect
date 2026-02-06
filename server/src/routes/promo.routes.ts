@@ -19,9 +19,9 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ message: 'Access denied. Salon owners only.' });
     }
 
-    const salon = await prisma.salon.findFirst();
+    const salon = await prisma.salon.findFirst({ where: { ownerId: req.userId } });
     if (!salon) {
-      return res.status(404).json({ message: 'No salon found' });
+      return res.status(404).json({ message: 'No salon found for this owner' });
     }
 
     const promoCodes = await prisma.promoCode.findMany({
@@ -51,9 +51,9 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ message: 'Access denied. Salon owners only.' });
     }
 
-    const salon = await prisma.salon.findFirst();
+    const salon = await prisma.salon.findFirst({ where: { ownerId: req.userId } });
     if (!salon) {
-      return res.status(404).json({ message: 'No salon found' });
+      return res.status(404).json({ message: 'No salon found for this owner' });
     }
 
     const { 

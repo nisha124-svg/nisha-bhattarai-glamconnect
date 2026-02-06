@@ -51,14 +51,24 @@ router.post('/register', async (req: Request<{}, {}, RegisterRequest>, res: Resp
     const hashedPassword = await bcrypt.hash(password, 12);
 
     // Create user
+    const userRole = (role as Role) || Role.USER;
     const user = await prisma.user.create({
       data: {
         email: sanitizedEmail,
         password: hashedPassword,
         name: sanitizedName,
-        role: (role as Role) || Role.USER
+        role: userRole,
+        isApproved: userRole === Role.SALON_OWNER ? false : true
       }
     });
+
+    // If salon owner, don't give token — they need admin approval first
+    if (userRole === Role.SALON_OWNER) {
+      return res.status(201).json({
+        message: 'Registration successful! Your salon owner account is pending admin approval. You will be able to log in once approved.',
+        pendingApproval: true
+      });
+    }
 
     // Generate JWT token
     const secret = process.env.JWT_SECRET;
@@ -119,6 +129,14 @@ router.post('/login', async (req: Request<{}, {}, LoginRequest>, res: Response) 
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    // Check if salon owner is approved
+    if (user.role === Role.SALON_OWNER && !user.isApproved) {
+      return res.status(403).json({ 
+        message: 'Your salon owner account is pending admin approval. Please wait for the admin to approve your account.',
+        pendingApproval: true
+      });
     }
 
     // Generate JWT token

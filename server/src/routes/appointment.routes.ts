@@ -46,6 +46,23 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ message: 'Stylist not found' });
     }
 
+    // Check if salon has auto-accept enabled and slot is available
+    let initialStatus: 'PENDING' | 'CONFIRMED' = 'PENDING';
+    
+    if (salon.autoAcceptBookings) {
+      // Check if the time slot is free for the stylist
+      const conflicting = await prisma.appointment.findFirst({
+        where: {
+          stylistId,
+          date: appointmentDate,
+          status: { notIn: ['CANCELLED', 'REJECTED'] }
+        }
+      });
+      if (!conflicting) {
+        initialStatus = 'CONFIRMED';
+      }
+    }
+
     // Create appointment
     const appointment = await prisma.appointment.create({
       data: {
@@ -55,7 +72,7 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
         stylistId,
         date: appointmentDate,
         price,
-        status: 'CONFIRMED'
+        status: initialStatus
       },
       include: {
         salon: true,
@@ -68,39 +85,49 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
     // Emit socket event for real-time notification
     const io = req.app.get('io');
     if (io) {
-      io.emit('booking_confirmed', {
-        serviceName: appointment.service.name,
-        userName: appointment.user.name,
-        date: appointment.date
-      });
+      if (initialStatus === 'CONFIRMED') {
+        io.emit('booking_confirmed', {
+          serviceName: appointment.service.name,
+          userName: appointment.user.name,
+          date: appointment.date
+        });
+      } else {
+        // Notify salon owner about new booking request
+        io.emit('booking_request', {
+          serviceName: appointment.service.name,
+          userName: appointment.user.name,
+          date: appointment.date
+        });
+      }
     }
 
-    // Send email confirmation
-    try {
-      await sendBookingConfirmation(appointment.user.email, {
-        userName: appointment.user.name,
-        serviceName: appointment.service.name,
-        salonName: appointment.salon.name,
-        date: appointment.date,
-        price: appointment.price
-      });
-    } catch (emailError) {
-      console.error('Failed to send confirmation email:', emailError);
-      // Don't fail the request if email fails
-    }
-
-    // Send SMS confirmation if phone number is available
-    if (appointment.user.phone) {
+    // Send email confirmation (only if auto-accepted)
+    if (initialStatus === 'CONFIRMED') {
       try {
-        await sendBookingSMS(appointment.user.phone, {
+        await sendBookingConfirmation(appointment.user.email, {
           userName: appointment.user.name,
           serviceName: appointment.service.name,
           salonName: appointment.salon.name,
           date: appointment.date,
           price: appointment.price
         });
-      } catch (smsError) {
-        console.error('Failed to send confirmation SMS:', smsError);
+      } catch (emailError) {
+        console.error('Failed to send confirmation email:', emailError);
+      }
+
+      // Send SMS confirmation if phone number is available
+      if (appointment.user.phone) {
+        try {
+          await sendBookingSMS(appointment.user.phone, {
+            userName: appointment.user.name,
+            serviceName: appointment.service.name,
+            salonName: appointment.salon.name,
+            date: appointment.date,
+            price: appointment.price
+          });
+        } catch (smsError) {
+          console.error('Failed to send confirmation SMS:', smsError);
+        }
       }
     }
 
@@ -370,6 +397,265 @@ router.get('/available-slots', async (req, res) => {
   } catch (error) {
     console.error('Error fetching available slots:', error);
     res.status(500).json({ message: 'Error fetching available slots. Please try again.' });
+  }
+});
+
+// =====================================================
+// SALON OWNER ENDPOINTS
+// =====================================================
+
+/**
+ * Get all bookings for the salon owner's salon
+ * GET /api/appointments/salon-bookings
+ */
+router.get('/salon-bookings', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user || user.role !== 'SALON_OWNER') {
+      return res.status(403).json({ message: 'Access denied. Salon owners only.' });
+    }
+
+    const salon = await prisma.salon.findFirst({ where: { ownerId: req.userId } });
+    if (!salon) {
+      return res.status(404).json({ message: 'No salon found for this owner' });
+    }
+
+    const bookings = await prisma.appointment.findMany({
+      where: { salonId: salon.id },
+      include: {
+        user: { select: { id: true, name: true, email: true, phone: true } },
+        service: true,
+        stylist: true,
+        salon: { select: { id: true, name: true, autoAcceptBookings: true } }
+      },
+      orderBy: { date: 'desc' }
+    });
+
+    res.json({ bookings, autoAcceptBookings: salon.autoAcceptBookings });
+  } catch (error) {
+    console.error('Error fetching salon bookings:', error);
+    res.status(500).json({ message: 'Error fetching salon bookings.' });
+  }
+});
+
+/**
+ * Accept a pending booking
+ * PATCH /api/appointments/:id/accept
+ */
+router.patch('/:id/accept', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user || user.role !== 'SALON_OWNER') {
+      return res.status(403).json({ message: 'Access denied. Salon owners only.' });
+    }
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: req.params.id },
+      include: { salon: true, service: true, stylist: true, user: { select: { name: true, email: true, phone: true } } }
+    });
+
+    if (!appointment) return res.status(404).json({ message: 'Appointment not found' });
+    if (appointment.status !== 'PENDING') {
+      return res.status(400).json({ message: `Cannot accept a ${appointment.status.toLowerCase()} appointment` });
+    }
+
+    const updated = await prisma.appointment.update({
+      where: { id: req.params.id },
+      data: { status: 'CONFIRMED' },
+      include: { salon: true, service: true, stylist: true, user: { select: { name: true, email: true, phone: true } } }
+    });
+
+    // Notify customer
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('booking_confirmed', {
+        serviceName: updated.service.name,
+        userName: updated.user.name,
+        date: updated.date
+      });
+    }
+
+    // Send confirmation email
+    try {
+      await sendBookingConfirmation(updated.user.email, {
+        userName: updated.user.name,
+        serviceName: updated.service.name,
+        salonName: updated.salon.name,
+        date: updated.date,
+        price: updated.price
+      });
+    } catch (e) { console.error('Email error:', e); }
+
+    // Send SMS
+    if (updated.user.phone) {
+      try {
+        await sendBookingSMS(updated.user.phone, {
+          userName: updated.user.name,
+          serviceName: updated.service.name,
+          salonName: updated.salon.name,
+          date: updated.date,
+          price: updated.price
+        });
+      } catch (e) { console.error('SMS error:', e); }
+    }
+
+    res.json({ message: 'Booking accepted', appointment: updated });
+  } catch (error) {
+    console.error('Error accepting booking:', error);
+    res.status(500).json({ message: 'Error accepting booking.' });
+  }
+});
+
+/**
+ * Reject a pending booking
+ * PATCH /api/appointments/:id/reject
+ */
+router.patch('/:id/reject', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user || user.role !== 'SALON_OWNER') {
+      return res.status(403).json({ message: 'Access denied. Salon owners only.' });
+    }
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: req.params.id },
+      include: { salon: true, service: true, user: { select: { name: true, email: true, phone: true } } }
+    });
+
+    if (!appointment) return res.status(404).json({ message: 'Appointment not found' });
+    if (appointment.status !== 'PENDING') {
+      return res.status(400).json({ message: `Cannot reject a ${appointment.status.toLowerCase()} appointment` });
+    }
+
+    const reason = req.body.reason || '';
+
+    const updated = await prisma.appointment.update({
+      where: { id: req.params.id },
+      data: { status: 'REJECTED' },
+      include: { salon: true, service: true, stylist: true, user: { select: { name: true, email: true, phone: true } } }
+    });
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('booking_rejected', {
+        serviceName: updated.service.name,
+        userName: updated.user.name,
+        reason
+      });
+    }
+
+    // Send cancellation SMS
+    if (updated.user.phone) {
+      try {
+        await sendCancellationSMS(updated.user.phone, {
+          userName: updated.user.name,
+          serviceName: updated.service.name,
+          salonName: updated.salon.name,
+          date: updated.date,
+          price: updated.price
+        });
+      } catch (e) { console.error('SMS error:', e); }
+    }
+
+    res.json({ message: 'Booking rejected', appointment: updated });
+  } catch (error) {
+    console.error('Error rejecting booking:', error);
+    res.status(500).json({ message: 'Error rejecting booking.' });
+  }
+});
+
+/**
+ * Mark an appointment as completed (service delivered)
+ * PATCH /api/appointments/:id/complete
+ */
+router.patch('/:id/complete', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user || user.role !== 'SALON_OWNER') {
+      return res.status(403).json({ message: 'Access denied. Salon owners only.' });
+    }
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: req.params.id },
+      include: { salon: true, service: true }
+    });
+
+    if (!appointment) return res.status(404).json({ message: 'Appointment not found' });
+    if (appointment.status !== 'CONFIRMED') {
+      return res.status(400).json({ message: `Can only complete confirmed appointments. Current status: ${appointment.status}` });
+    }
+
+    const updated = await prisma.appointment.update({
+      where: { id: req.params.id },
+      data: { status: 'COMPLETED' },
+      include: { salon: true, service: true, stylist: true, user: { select: { name: true, email: true, phone: true } } }
+    });
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('service_completed', {
+        serviceName: updated.service.name,
+        userName: updated.user.name,
+        salonName: updated.salon.name
+      });
+    }
+
+    res.json({ message: 'Service marked as completed', appointment: updated });
+  } catch (error) {
+    console.error('Error completing appointment:', error);
+    res.status(500).json({ message: 'Error completing appointment.' });
+  }
+});
+
+/**
+ * Toggle auto-accept bookings for a salon
+ * PATCH /api/appointments/toggle-auto-accept
+ */
+router.patch('/toggle-auto-accept', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user || user.role !== 'SALON_OWNER') {
+      return res.status(403).json({ message: 'Access denied. Salon owners only.' });
+    }
+
+    const { autoAccept } = req.body;
+    if (typeof autoAccept !== 'boolean') {
+      return res.status(400).json({ message: 'autoAccept must be a boolean' });
+    }
+
+    // Find salon by owner
+    const salon = await prisma.salon.findFirst({ where: { ownerId: req.userId } });
+    if (!salon) return res.status(404).json({ message: 'No salon found for this owner' });
+
+    const updated = await prisma.salon.update({
+      where: { id: salon.id },
+      data: { autoAcceptBookings: autoAccept }
+    });
+
+    res.json({ message: `Auto-accept bookings ${autoAccept ? 'enabled' : 'disabled'}`, autoAcceptBookings: updated.autoAcceptBookings });
+  } catch (error) {
+    console.error('Error toggling auto-accept:', error);
+    res.status(500).json({ message: 'Error updating setting.' });
   }
 });
 

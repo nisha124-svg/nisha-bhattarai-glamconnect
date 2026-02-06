@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Users, Building2, Calendar, TrendingUp, Settings, Shield,
-  Search, MoreVertical, CheckCircle, XCircle, Clock, AlertTriangle,
+  Search, MoreVertical, CheckCircle, XCircle, Clock, AlertTriangle, AlertCircle,
   BarChart3, DollarSign, Star, Eye, Trash2, Edit, Ban, ChevronDown, Loader2, RefreshCw
 } from 'lucide-react';
 import { Button } from '../components/Button';
@@ -46,6 +46,7 @@ interface Stats {
   totalSalons: number;
   totalAppointments: number;
   pendingSalons: number;
+  pendingOwners: number;
   totalRevenue: number;
 }
 
@@ -59,7 +60,9 @@ export const AdminPage: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [salons, setSalons] = useState<SalonAdmin[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [pendingOwners, setPendingOwners] = useState<any[]>([]);
   const [recentUsers, setRecentUsers] = useState<any[]>([]);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'user' | 'salon'; id: string; name: string } | null>(null);
   const [recentBookings, setRecentBookings] = useState<any[]>([]);
   
   // Loading states
@@ -176,8 +179,68 @@ export const AdminPage: React.FC = () => {
     }
   };
 
+  // Fetch pending salon owners
+  const fetchPendingOwners = async () => {
+    try {
+      const response = await admin.getPendingOwners();
+      setPendingOwners(response.data || []);
+    } catch (error) {
+      console.error('Error fetching pending owners:', error);
+    }
+  };
+
+  // Handle approve salon owner
+  const handleApproveOwner = async (userId: string) => {
+    try {
+      await admin.approveOwner(userId);
+      fetchPendingOwners();
+      fetchStats();
+      fetchUsers();
+    } catch (error) {
+      console.error('Error approving owner:', error);
+    }
+  };
+
+  // Handle reject salon owner
+  const handleRejectOwner = async (userId: string) => {
+    try {
+      await admin.rejectOwner(userId, 'Rejected by admin');
+      fetchPendingOwners();
+      fetchStats();
+      fetchUsers();
+    } catch (error) {
+      console.error('Error rejecting owner:', error);
+    }
+  };
+
+  // Handle delete user
+  const handleDeleteUser = async (userId: string) => {
+    try {
+      await admin.deleteUser(userId);
+      setDeleteConfirm(null);
+      fetchUsers();
+      fetchStats();
+      fetchPendingOwners();
+    } catch (error) {
+      console.error('Error deleting user:', error);
+    }
+  };
+
+  // Handle delete salon
+  const handleDeleteSalon = async (salonId: string) => {
+    try {
+      await admin.deleteSalon(salonId);
+      setDeleteConfirm(null);
+      fetchSalons();
+      fetchStats();
+    } catch (error) {
+      console.error('Error deleting salon:', error);
+    }
+  };
+
   useEffect(() => {
     fetchStats();
+    fetchPendingOwners();
   }, []);
 
   useEffect(() => {
@@ -273,7 +336,7 @@ export const AdminPage: React.FC = () => {
             <div className="flex items-center space-x-4">
               <div className="relative">
                 <div className="bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center absolute -top-1 -right-1">
-                  {stats?.pendingSalons || 0}
+                  {(stats?.pendingSalons || 0) + (stats?.pendingOwners || 0)}
                 </div>
                 <Button variant="ghost" className="text-white hover:bg-white/10">
                   <AlertTriangle className="h-5 w-5" />
@@ -361,7 +424,41 @@ export const AdminPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Pending Approvals */}
+            {/* Pending Owner Approvals */}
+            {pendingOwners.length > 0 && (
+              <div className="bg-orange-50 border border-orange-200 rounded-xl p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-orange-800 flex items-center">
+                    <AlertTriangle className="h-5 w-5 mr-2" />
+                    Pending Salon Owner Approvals ({pendingOwners.length})
+                  </h3>
+                  <Button size="sm" variant="outline" onClick={() => { setActiveTab('users'); setSelectedFilter('SALON_OWNER'); }}>
+                    View All
+                  </Button>
+                </div>
+                <div className="space-y-3">
+                  {pendingOwners.slice(0, 5).map((owner: any) => (
+                    <div key={owner.id} className="flex items-center justify-between bg-white rounded-lg p-3 border border-orange-100">
+                      <div>
+                        <p className="font-medium text-gray-900">{owner.name}</p>
+                        <p className="text-sm text-gray-500">{owner.email}</p>
+                        <p className="text-xs text-gray-400">Registered {new Date(owner.createdAt).toLocaleDateString()}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => handleApproveOwner(owner.id)} className="bg-green-600 hover:bg-green-700 text-white">
+                          <CheckCircle className="h-4 w-4 mr-1" /> Approve
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => handleRejectOwner(owner.id)} className="text-red-600 border-red-300 hover:bg-red-50">
+                          <XCircle className="h-4 w-4 mr-1" /> Reject
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Pending Salon Approvals */}
             {(stats?.pendingSalons || 0) > 0 && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6">
                 <div className="flex items-center justify-between mb-4">
@@ -514,18 +611,44 @@ export const AdminPage: React.FC = () => {
                         <td className="py-4 px-6 text-gray-900">{user.totalBookings}</td>
                         <td className="py-4 px-6">
                           <div className="flex items-center space-x-2">
-                            <button className="p-1 hover:bg-gray-100 rounded" title="View">
-                              <Eye className="h-4 w-4 text-gray-500" />
-                            </button>
-                            <select 
-                              className="text-xs border rounded px-1 py-0.5"
-                              value={user.role}
-                              onChange={(e) => handleUpdateUserRole(user.id, e.target.value)}
-                            >
-                              <option value="USER">User</option>
-                              <option value="SALON_OWNER">Salon Owner</option>
-                              <option value="ADMIN">Admin</option>
-                            </select>
+                            {user.status === 'pending' && user.role === 'SALON_OWNER' ? (
+                              <>
+                                <button 
+                                  onClick={() => handleApproveOwner(user.id)}
+                                  className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium hover:bg-green-200 flex items-center gap-1"
+                                >
+                                  <CheckCircle className="h-3 w-3" /> Approve
+                                </button>
+                                <button 
+                                  onClick={() => handleRejectOwner(user.id)}
+                                  className="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-medium hover:bg-red-200 flex items-center gap-1"
+                                >
+                                  <XCircle className="h-3 w-3" /> Reject
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button className="p-1 hover:bg-gray-100 rounded" title="View">
+                                  <Eye className="h-4 w-4 text-gray-500" />
+                                </button>
+                                <select 
+                                  className="text-xs border rounded px-1 py-0.5"
+                                  value={user.role}
+                                  onChange={(e) => handleUpdateUserRole(user.id, e.target.value)}
+                                >
+                                  <option value="USER">User</option>
+                                  <option value="SALON_OWNER">Salon Owner</option>
+                                  <option value="ADMIN">Admin</option>
+                                </select>
+                                <button 
+                                  className="p-1 hover:bg-red-50 rounded" 
+                                  title="Delete User"
+                                  onClick={() => setDeleteConfirm({ type: 'user', id: user.id, name: user.name })}
+                                >
+                                  <Trash2 className="h-4 w-4 text-red-500" />
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -651,6 +774,13 @@ export const AdminPage: React.FC = () => {
                                     <CheckCircle className="h-4 w-4 text-green-500" />
                                   </button>
                                 )}
+                                <button 
+                                  className="p-1 hover:bg-red-50 rounded" 
+                                  title="Delete Salon"
+                                  onClick={() => setDeleteConfirm({ type: 'salon', id: salon.id, name: salon.name })}
+                                >
+                                  <Trash2 className="h-4 w-4 text-red-500" />
+                                </button>
                               </>
                             )}
                           </div>
@@ -878,6 +1008,55 @@ export const AdminPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+                <AlertCircle className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Confirm Deletion</h3>
+                <p className="text-sm text-gray-500">This action cannot be undone</p>
+              </div>
+            </div>
+            <p className="text-gray-700 mb-2">
+              Are you sure you want to delete this {deleteConfirm.type}?
+            </p>
+            <div className="bg-gray-50 rounded-lg p-3 mb-4">
+              <p className="font-medium text-gray-900">{deleteConfirm.name}</p>
+              <p className="text-xs text-red-500 mt-1">
+                {deleteConfirm.type === 'user'
+                  ? 'All appointments, reviews, notifications, and owned salons will also be deleted.'
+                  : 'All services, staff, appointments, reviews, and promo codes for this salon will also be deleted.'}
+              </p>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <Button
+                variant="outline"
+                onClick={() => setDeleteConfirm(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => {
+                  if (deleteConfirm.type === 'user') {
+                    handleDeleteUser(deleteConfirm.id);
+                  } else {
+                    handleDeleteSalon(deleteConfirm.id);
+                  }
+                  setDeleteConfirm(null);
+                }}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

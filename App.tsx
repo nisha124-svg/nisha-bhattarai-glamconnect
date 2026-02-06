@@ -8,8 +8,13 @@ import { OffersPage } from './pages/OffersPage';
 import { BlogPage } from './pages/BlogPage';
 import { AuthPage } from './pages/AuthPage';
 import { AdminPage } from './pages/AdminPage';
+import { NearbySalonsPage } from './pages/NearbySalonsPage';
+import { PriceComparisonPage } from './pages/PriceComparisonPage';
+import { MyBookingsPage } from './pages/MyBookingsPage';
+import { SalonSetupPage } from './pages/SalonSetupPage';
 import { BeautyAssistant } from './components/BeautyAssistant';
 import { Salon, PageView } from './types';
+import { salons as salonsApi } from './api/client';
 import { CheckCircle } from 'lucide-react';
 import { Button } from './components/Button';
 import { io } from 'socket.io-client';
@@ -22,10 +27,37 @@ const App: React.FC = () => {
   const [selectedSalon, setSelectedSalon] = useState<Salon | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Helper to get current user role
+  const getUserRole = (): string | null => {
+    try {
+      const userStr = localStorage.getItem('user');
+      if (userStr) return JSON.parse(userStr).role;
+    } catch {}
+    return null;
+  };
+
+  // Auto-redirect on app load based on role
+  React.useEffect(() => {
+    const role = getUserRole();
+    if (role === 'ADMIN') {
+      setCurrentPage(PageView.ADMIN);
+    } else if (role === 'SALON_OWNER') {
+      // Check if salon owner has a salon set up
+      salonsApi.getMySalon().then(res => {
+        if (res.data.hasSalon) {
+          setCurrentPage(PageView.DASHBOARD);
+        } else {
+          setCurrentPage(PageView.SALON_SETUP);
+        }
+      }).catch(() => {
+        setCurrentPage(PageView.SALON_SETUP);
+      });
+    }
+  }, []);
+
   React.useEffect(() => {
     socket.on('booking_confirmed', (data: any) => {
       toast.success(`Booking confirmed for ${data.serviceName}!`);
-      // Optionally navigate or update state
     });
 
     return () => {
@@ -34,8 +66,23 @@ const App: React.FC = () => {
   }, []);
 
   const handleSetCurrentPage = (page: PageView) => {
+    const role = getUserRole();
+
+    // Guard: Admin can only access Admin panel and Auth
+    if (role === 'ADMIN' && ![PageView.ADMIN, PageView.AUTH].includes(page)) {
+      setCurrentPage(PageView.ADMIN);
+      setRefreshKey(prev => prev + 1);
+      return;
+    }
+
+    // Guard: Salon Owner can only access Dashboard and Auth
+    if (role === 'SALON_OWNER' && ![PageView.DASHBOARD, PageView.AUTH].includes(page)) {
+      setCurrentPage(PageView.DASHBOARD);
+      setRefreshKey(prev => prev + 1);
+      return;
+    }
+
     setCurrentPage(page);
-    // Refresh Layout to update user state
     setRefreshKey(prev => prev + 1);
   };
 
@@ -99,6 +146,26 @@ const App: React.FC = () => {
         handleSetCurrentPage(PageView.LANDING);
         return <LandingPage onNavigate={handleSetCurrentPage} />;
 
+      case PageView.NEARBY_SALONS:
+        return <NearbySalonsPage onSelectSalon={handleSelectSalon} />;
+
+      case PageView.PRICE_COMPARISON:
+        return <PriceComparisonPage onSelectSalon={handleSelectSalon} />;
+
+      case PageView.MY_BOOKINGS:
+        // Only logged-in users can view their bookings
+        if (localStorage.getItem('token')) {
+          return <MyBookingsPage />;
+        }
+        handleSetCurrentPage(PageView.AUTH);
+        return <AuthPage onLoginSuccess={(page) => handleSetCurrentPage(page)} />;
+
+      case PageView.SALON_SETUP:
+        return (
+          <SalonSetupPage
+            onSetupComplete={() => handleSetCurrentPage(PageView.DASHBOARD)}
+          />
+        );
       case PageView.BOOKING_SUCCESS:
         return (
           <div className="min-h-[80vh] flex flex-col items-center justify-center p-4 bg-gray-50">
@@ -111,7 +178,7 @@ const App: React.FC = () => {
                 Your appointment has been successfully scheduled. We've sent a confirmation email with all the details.
               </p>
               <div className="space-y-3">
-                <Button className="w-full" onClick={() => handleSetCurrentPage(PageView.DASHBOARD)}>View in Dashboard</Button>
+                <Button className="w-full" onClick={() => handleSetCurrentPage(PageView.MY_BOOKINGS)}>View My Bookings</Button>
                 <Button variant="ghost" className="w-full" onClick={() => handleSetCurrentPage(PageView.LANDING)}>Return Home</Button>
               </div>
             </div>

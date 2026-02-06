@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Star, MapPin, Clock, Calendar, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Star, MapPin, Clock, Calendar, CheckCircle, Loader2, AlertCircle, Phone, Mail } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Salon, Service, Stylist } from '../types';
+import { SalonMap } from '../components/GoogleMap';
 
 import { appointments, salons as salonApi } from '../api/client';
 
@@ -71,15 +72,24 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
 
     setLoadingSlots(true);
     try {
-      // Generate base slots
-      const baseSlots = generateTimeSlots(selectedService.duration);
-      
-      // Fetch existing appointments for the date
-      const response = await salonApi.getById(salon.id);
-      // For now, mark all slots as available - in production, check against existing appointments
-      setAvailableSlots(baseSlots);
+      const stylistId = selectedStylist?.id || salon.stylists[0]?.id;
+      if (stylistId) {
+        // Fetch real-time availability from the server (prevents double-booking)
+        const response = await appointments.getAvailableSlots(stylistId, selectedDate, salon.id);
+        const serverSlots = response.data.slots || [];
+        // Map server slots to our TimeSlot format
+        const mappedSlots: TimeSlot[] = serverSlots.map((slot: any) => ({
+          time: slot.display,
+          available: slot.available
+        }));
+        setAvailableSlots(mappedSlots);
+      } else {
+        // Fallback to generated slots if no stylist available
+        setAvailableSlots(generateTimeSlots(selectedService.duration));
+      }
     } catch (error) {
       console.error('Error fetching slots:', error);
+      // Fallback to client-generated slots
       setAvailableSlots(generateTimeSlots(selectedService.duration));
     } finally {
       setLoadingSlots(false);
@@ -208,6 +218,16 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
                     }`}
                 >
                   {tab}
+                  {tab === 'reviews' && salon.reviews?.length > 0 && (
+                    <span className="ml-2 bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded-full">
+                      {salon.reviews.length}
+                    </span>
+                  )}
+                  {tab === 'services' && salon.services?.length > 0 && (
+                    <span className="ml-2 bg-pink-100 text-pink-600 text-xs px-2 py-0.5 rounded-full">
+                      {salon.services.length}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -252,16 +272,91 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
             )}
 
             {activeTab === 'about' && (
-              <div className="bg-gray-50 rounded-xl p-6 text-gray-700 leading-relaxed">
-                <p>{salon.description}</p>
-                <div className="mt-6">
-                  <h4 className="font-bold text-gray-900 mb-2">Gallery</h4>
-                  <div className="grid grid-cols-3 gap-2">
-                    {salon.gallery.map((img, i) => (
-                      <img key={i} src={img} alt="Salon interior" className="rounded-lg h-24 w-full object-cover" />
-                    ))}
+              <div className="space-y-6">
+                {/* Description */}
+                <div className="bg-gray-50 rounded-xl p-6 text-gray-700 leading-relaxed">
+                  <h4 className="font-bold text-gray-900 mb-3 text-lg">About {salon.name}</h4>
+                  <p>{salon.description}</p>
+                </div>
+
+                {/* Location Map */}
+                <div className="bg-gray-50 rounded-xl p-6">
+                  <h4 className="font-bold text-gray-900 mb-3 text-lg flex items-center gap-2">
+                    <MapPin className="h-5 w-5 text-pink-500" /> Location
+                  </h4>
+                  <p className="text-gray-600 mb-4">{salon.address}</p>
+                  <SalonMap
+                    salons={[salon]}
+                    userLocation={null}
+                    height="250px"
+                  />
+                </div>
+
+                {/* Opening Hours */}
+                <div className="bg-gray-50 rounded-xl p-6">
+                  <h4 className="font-bold text-gray-900 mb-3 text-lg flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-pink-500" /> Opening Hours
+                  </h4>
+                  <div className="space-y-2 text-sm text-gray-600">
+                    {[
+                      { day: 'Monday', hours: '09:00 AM - 08:00 PM' },
+                      { day: 'Tuesday', hours: '09:00 AM - 08:00 PM' },
+                      { day: 'Wednesday', hours: '09:00 AM - 08:00 PM' },
+                      { day: 'Thursday', hours: '09:00 AM - 08:00 PM' },
+                      { day: 'Friday', hours: '09:00 AM - 08:00 PM' },
+                      { day: 'Saturday', hours: '10:00 AM - 06:00 PM' },
+                      { day: 'Sunday', hours: 'Closed' },
+                    ].map(schedule => {
+                      const today = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+                      const isToday = schedule.day === today;
+                      return (
+                        <div 
+                          key={schedule.day} 
+                          className={`flex justify-between py-2 px-3 rounded-lg ${isToday ? 'bg-pink-50 border border-pink-100' : ''}`}
+                        >
+                          <span className={`font-medium ${isToday ? 'text-pink-600' : ''}`}>
+                            {schedule.day} {isToday && <span className="text-xs">(Today)</span>}
+                          </span>
+                          <span className={schedule.hours === 'Closed' ? 'text-red-500 font-medium' : ''}>
+                            {schedule.hours}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
+
+                {/* Stylists */}
+                {salon.stylists?.length > 0 && (
+                  <div className="bg-gray-50 rounded-xl p-6">
+                    <h4 className="font-bold text-gray-900 mb-4 text-lg">Our Team</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      {salon.stylists.map(stylist => (
+                        <div key={stylist.id} className="bg-white rounded-xl p-4 text-center border border-gray-100">
+                          <img src={stylist.avatar} alt={stylist.name} className="h-16 w-16 rounded-full object-cover mx-auto mb-2" />
+                          <p className="font-bold text-gray-900">{stylist.name}</p>
+                          <p className="text-xs text-gray-500">{stylist.role}</p>
+                          <div className="flex items-center justify-center gap-1 mt-1">
+                            <Star className="h-3 w-3 fill-current text-yellow-400" />
+                            <span className="text-sm font-medium">{stylist.rating}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Gallery */}
+                {salon.gallery?.length > 0 && (
+                  <div className="bg-gray-50 rounded-xl p-6">
+                    <h4 className="font-bold text-gray-900 mb-4 text-lg">Gallery</h4>
+                    <div className="grid grid-cols-3 gap-3">
+                      {salon.gallery.map((img, i) => (
+                        <img key={i} src={img} alt={`${salon.name} gallery ${i+1}`} className="rounded-lg h-32 w-full object-cover hover:opacity-90 transition cursor-pointer" />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

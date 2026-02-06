@@ -76,6 +76,8 @@ export const auth = {
 export const salons = {
   getAll: () => api.get('/salons'),
   getById: (id: string) => api.get(`/salons/${id}`),
+  getMySalon: () => api.get('/salons/my-salon'),
+  setup: (data: any) => api.post('/salons/setup', data),
   search: (query: string) => api.get(`/salons/search/query?q=${encodeURIComponent(query)}`),
   filter: (filters: {
     query?: string;
@@ -103,6 +105,12 @@ export const appointments = {
     api.patch(`/appointments/${id}/reschedule`, data),
   getAvailableSlots: (stylistId: string, date: string, salonId: string) => 
     api.get(`/appointments/available-slots?stylistId=${stylistId}&date=${date}&salonId=${salonId}`),
+  // Salon owner endpoints
+  getSalonBookings: () => api.get('/appointments/salon-bookings'),
+  accept: (id: string) => api.patch(`/appointments/${id}/accept`),
+  reject: (id: string, reason?: string) => api.patch(`/appointments/${id}/reject`, { reason }),
+  complete: (id: string) => api.patch(`/appointments/${id}/complete`),
+  toggleAutoAccept: (autoAccept: boolean) => api.patch('/appointments/toggle-auto-accept', { autoAccept }),
 };
 
 // Dashboard Analytics API
@@ -147,6 +155,14 @@ export const admin = {
     api.get('/admin/users', { params }),
   updateUserRole: (userId: string, role: string) => 
     api.put(`/admin/users/${userId}/role`, { role }),
+  getPendingOwners: () =>
+    api.get('/admin/pending-owners'),
+  approveOwner: (userId: string) =>
+    api.put(`/admin/users/${userId}/approve`),
+  rejectOwner: (userId: string, reason?: string) =>
+    api.put(`/admin/users/${userId}/reject`, { reason }),
+  deleteUser: (userId: string) =>
+    api.delete(`/admin/users/${userId}`),
   
   // Salon Management
   getSalons: (params?: { status?: string; search?: string; page?: number; limit?: number }) => 
@@ -155,6 +171,8 @@ export const admin = {
     api.put(`/admin/salons/${salonId}/approve`),
   suspendSalon: (salonId: string, reason?: string) => 
     api.put(`/admin/salons/${salonId}/suspend`, { reason }),
+  deleteSalon: (salonId: string) =>
+    api.delete(`/admin/salons/${salonId}`),
   
   // Booking Management
   getBookings: (params?: { status?: string; search?: string; page?: number; limit?: number }) => 

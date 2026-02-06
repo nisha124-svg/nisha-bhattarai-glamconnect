@@ -14,6 +14,7 @@ model User {
   name          String
   phone         String?
   role          Role     @default(USER)
+  isApproved    Boolean  @default(true)
   loyaltyPoints Int      @default(0)
   totalSpent    Float    @default(0)
   membershipTier String  @default("BASIC") // BASIC, SILVER, GOLD, PLATINUM
@@ -39,6 +40,7 @@ model Salon {
   rating      Float    @default(0)
   reviewCount Int      @default(0)
   isVerified  Boolean  @default(false)
+  autoAcceptBookings Boolean @default(true)
   ownerId     String?
   owner       User?    @relation(fields: [ownerId], references: [id])
   latitude    Float?
@@ -201,9 +203,11 @@ enum Role {
 }
 
 enum AppointmentStatus {
+  PENDING
   CONFIRMED
   COMPLETED
   CANCELLED
+  REJECTED
 }
 
 enum DiscountType {

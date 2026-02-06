@@ -30,9 +30,9 @@ export const ServiceManagement: React.FC = () => {
   const fetchServices = async () => {
     try {
       setLoading(true);
-      // First get salon ID
-      const salonsResponse = await salons.getAll();
-      const salon = salonsResponse.data[0];
+      // First get the owner's salon
+      const salonsResponse = await salons.getMySalon();
+      const salon = salonsResponse.data.salon;
       if (salon) {
         setSalonId(salon.id);
         const servicesResponse = await services.getBySalon(salon.id);

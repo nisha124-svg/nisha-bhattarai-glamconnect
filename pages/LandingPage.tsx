@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, MapPin, Star, ChevronRight, Loader2 } from 'lucide-react';
+import { Search, MapPin, Star, ChevronRight, Loader2, Navigation, DollarSign } from 'lucide-react';
 import { Button } from '../components/Button';
 import { CATEGORIES } from '../constants';
 import { PageView, Salon } from '../types';
@@ -12,6 +12,8 @@ interface LandingPageProps {
 export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
   const [featuredSalons, setFeaturedSalons] = useState<Salon[]>([]);
   const [loading, setLoading] = useState(true);
+  const [locationQuery, setLocationQuery] = useState('');
+  const [serviceQuery, setServiceQuery] = useState('');
 
   useEffect(() => {
     const fetchSalons = async () => {
@@ -62,6 +64,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
               <input 
                 type="text" 
                 placeholder="Where are you?" 
+                value={locationQuery}
+                onChange={(e) => setLocationQuery(e.target.value)}
                 className="w-full bg-transparent outline-none text-gray-700 placeholder-gray-400"
               />
             </div>
@@ -70,6 +74,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
               <input 
                 type="text" 
                 placeholder="Service or Salon name" 
+                value={serviceQuery}
+                onChange={(e) => setServiceQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') onNavigate(PageView.SALON_LIST); }}
                 className="w-full bg-transparent outline-none text-gray-700 placeholder-gray-400"
               />
             </div>
@@ -78,6 +85,24 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
                 Find Salon
               </Button>
             </div>
+          </div>
+
+          {/* Quick Action Buttons */}
+          <div className="flex flex-wrap justify-center gap-3 mt-6">
+            <button
+              onClick={() => onNavigate(PageView.NEARBY_SALONS)}
+              className="flex items-center gap-2 bg-white/90 backdrop-blur-sm text-gray-700 px-5 py-2.5 rounded-full hover:bg-white transition shadow-md text-sm font-medium"
+            >
+              <Navigation className="h-4 w-4 text-blue-500" />
+              Nearby Salons
+            </button>
+            <button
+              onClick={() => onNavigate(PageView.PRICE_COMPARISON)}
+              className="flex items-center gap-2 bg-white/90 backdrop-blur-sm text-gray-700 px-5 py-2.5 rounded-full hover:bg-white transition shadow-md text-sm font-medium"
+            >
+              <DollarSign className="h-4 w-4 text-green-500" />
+              Compare Prices
+            </button>
           </div>
         </div>
       </section>
@@ -91,7 +116,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
         
         <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
           {CATEGORIES.map((cat, idx) => (
-            <div key={idx} className="group cursor-pointer">
+            <div key={idx} className="group cursor-pointer" onClick={() => onNavigate(PageView.SALON_LIST)}>
               <div className="relative h-40 rounded-2xl overflow-hidden mb-4 shadow-md group-hover:shadow-xl transition-all duration-300">
                 <img src={cat.image} alt={cat.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                 <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors"></div>

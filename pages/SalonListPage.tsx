@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Salon, Service } from '../types';
 import { salons as salonApi } from '../api/client';
-import { Search, MapPin, Star, Filter, X, SlidersHorizontal, Clock, DollarSign } from 'lucide-react';
+import { Search, MapPin, Star, Filter, X, SlidersHorizontal, Clock, DollarSign, Map as MapIcon } from 'lucide-react';
 import { Button } from '../components/Button';
+import { SalonMap, LocationButton } from '../components/GoogleMap';
 
 interface SalonListPageProps {
   onSelectSalon: (salon: Salon) => void;
@@ -20,6 +21,8 @@ export const SalonListPage: React.FC<SalonListPageProps> = ({ onSelectSalon }) =
   const [salons, setSalons] = useState<Salon[]>([]);
   const [loading, setLoading] = useState(true);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const [showMap, setShowMap] = useState(false);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [filters, setFilters] = useState<FilterState>({
     serviceTypes: [],
     priceRange: [],
@@ -242,7 +245,16 @@ export const SalonListPage: React.FC<SalonListPageProps> = ({ onSelectSalon }) =
           <option value="rating">Highest Rated</option>
           <option value="price">Lowest Price</option>
           <option value="name">Name (A-Z)</option>
+          <option value="distance">Nearest First</option>
         </select>
+      </div>
+
+      {/* Location for distance sorting */}
+      <div className="mb-6">
+        <h4 className="text-sm font-semibold text-gray-700 mb-3">Your Location</h4>
+        <LocationButton 
+          onLocationFound={(lat, lng) => setUserLocation({ lat, lng })}
+        />
       </div>
 
       <Button variant="outline" size="sm" className="w-full" onClick={resetFilters}>
@@ -284,6 +296,13 @@ export const SalonListPage: React.FC<SalonListPageProps> = ({ onSelectSalon }) =
                 </button>
               )}
             </div>
+            <button
+              onClick={() => setShowMap(!showMap)}
+              className={`p-2.5 border rounded-xl transition ${showMap ? 'bg-pink-500 text-white border-pink-500' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+              title={showMap ? 'Hide Map' : 'Show Map'}
+            >
+              <MapIcon className="h-5 w-5" />
+            </button>
             <button 
               onClick={() => setShowMobileFilters(true)}
               className="lg:hidden p-2.5 border border-gray-200 rounded-xl bg-white text-gray-600 hover:bg-gray-50 hover:text-pink-600 transition relative"
@@ -314,6 +333,18 @@ export const SalonListPage: React.FC<SalonListPageProps> = ({ onSelectSalon }) =
                 Apply Filters
               </Button>
             </div>
+          </div>
+        )}
+
+        {/* Map View */}
+        {showMap && (
+          <div className="mb-8">
+            <SalonMap 
+              salons={filteredSalons} 
+              userLocation={userLocation} 
+              onSalonClick={onSelectSalon}
+              height="350px"
+            />
           </div>
         )}
 

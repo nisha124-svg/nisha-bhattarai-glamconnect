@@ -1,5 +1,5 @@
 import React from 'react';
-import { Menu, X, User, Heart, Sparkles, LayoutDashboard, ChevronDown, LogOut, Shield } from 'lucide-react';
+import { Menu, X, User, Heart, Sparkles, LayoutDashboard, ChevronDown, LogOut, Shield, Navigation, DollarSign, CalendarCheck } from 'lucide-react';
 import { PageView } from '../types';
 
 interface LayoutProps {
@@ -48,6 +48,10 @@ export const Layout: React.FC<LayoutProps> = ({ children, setCurrentPage, curren
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const isAdmin = user?.role === 'ADMIN';
+  const isSalonOwner = user?.role === 'SALON_OWNER';
+  const isCustomer = !isAdmin && !isSalonOwner; // regular user or guest
+
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 font-sans">
       {/* Navbar */}
@@ -57,7 +61,11 @@ export const Layout: React.FC<LayoutProps> = ({ children, setCurrentPage, curren
             {/* Logo */}
             <div 
               className="flex-shrink-0 flex items-center cursor-pointer" 
-              onClick={() => setCurrentPage(PageView.LANDING)}
+              onClick={() => {
+                if (isAdmin) setCurrentPage(PageView.ADMIN);
+                else if (isSalonOwner) setCurrentPage(PageView.DASHBOARD);
+                else setCurrentPage(PageView.LANDING);
+              }}
             >
               <Sparkles className="h-8 w-8 text-pink-500 mr-2" />
               <span className="text-2xl font-bold bg-gradient-to-r from-pink-500 to-rose-400 bg-clip-text text-transparent">
@@ -67,63 +75,102 @@ export const Layout: React.FC<LayoutProps> = ({ children, setCurrentPage, curren
 
             {/* Desktop Nav */}
             <div className="hidden md:flex items-center space-x-8">
-              <button 
-                onClick={() => setCurrentPage(PageView.LANDING)}
-                className={`${currentPage === PageView.LANDING ? 'text-pink-600 font-semibold' : 'text-gray-600'} hover:text-pink-500 transition`}
-              >
-                Home
-              </button>
-              <button 
-                onClick={() => setCurrentPage(PageView.SALON_LIST)}
-                className={`${currentPage === PageView.SALON_LIST ? 'text-pink-600 font-semibold' : 'text-gray-600'} hover:text-pink-500 transition`}
-              >
-                Find Salon
-              </button>
-              <button 
-                onClick={() => setCurrentPage(PageView.OFFERS)}
-                className={`${currentPage === PageView.OFFERS ? 'text-pink-600 font-semibold' : 'text-gray-600'} hover:text-pink-500 transition`}
-              >
-                Offers
-              </button>
-              <button 
-                onClick={() => setCurrentPage(PageView.BLOG)}
-                className={`${currentPage === PageView.BLOG ? 'text-pink-600 font-semibold' : 'text-gray-600'} hover:text-pink-500 transition`}
-              >
-                Blog
-              </button>
+              {/* Admin nav — only Admin Panel */}
+              {isAdmin && (
+                <button 
+                  onClick={() => setCurrentPage(PageView.ADMIN)}
+                  className={`${currentPage === PageView.ADMIN ? 'text-purple-600 font-semibold' : 'text-gray-600'} hover:text-purple-500 transition flex items-center gap-1`}
+                >
+                  <Shield className="h-4 w-4" />
+                  Admin Panel
+                </button>
+              )}
+
+              {/* Salon Owner nav — only Dashboard */}
+              {isSalonOwner && (
+                <button 
+                  onClick={() => setCurrentPage(PageView.DASHBOARD)}
+                  className={`${currentPage === PageView.DASHBOARD ? 'text-pink-600 font-semibold' : 'text-gray-600'} hover:text-pink-500 transition flex items-center gap-1`}
+                >
+                  <LayoutDashboard className="h-4 w-4" />
+                  Salon Dashboard
+                </button>
+              )}
+
+              {/* Customer / Guest nav — full browsing links */}
+              {isCustomer && (
+                <>
+                  <button 
+                    onClick={() => setCurrentPage(PageView.LANDING)}
+                    className={`${currentPage === PageView.LANDING ? 'text-pink-600 font-semibold' : 'text-gray-600'} hover:text-pink-500 transition`}
+                  >
+                    Home
+                  </button>
+                  <button 
+                    onClick={() => setCurrentPage(PageView.SALON_LIST)}
+                    className={`${currentPage === PageView.SALON_LIST ? 'text-pink-600 font-semibold' : 'text-gray-600'} hover:text-pink-500 transition`}
+                  >
+                    Find Salon
+                  </button>
+                  <button 
+                    onClick={() => setCurrentPage(PageView.NEARBY_SALONS)}
+                    className={`${currentPage === PageView.NEARBY_SALONS ? 'text-pink-600 font-semibold' : 'text-gray-600'} hover:text-pink-500 transition flex items-center gap-1`}
+                  >
+                    <Navigation className="h-3.5 w-3.5" />
+                    Nearby
+                  </button>
+                  <button 
+                    onClick={() => setCurrentPage(PageView.PRICE_COMPARISON)}
+                    className={`${currentPage === PageView.PRICE_COMPARISON ? 'text-pink-600 font-semibold' : 'text-gray-600'} hover:text-pink-500 transition flex items-center gap-1`}
+                  >
+                    <DollarSign className="h-3.5 w-3.5" />
+                    Compare
+                  </button>
+                  <button 
+                    onClick={() => setCurrentPage(PageView.OFFERS)}
+                    className={`${currentPage === PageView.OFFERS ? 'text-pink-600 font-semibold' : 'text-gray-600'} hover:text-pink-500 transition`}
+                  >
+                    Offers
+                  </button>
+                  <button 
+                    onClick={() => setCurrentPage(PageView.BLOG)}
+                    className={`${currentPage === PageView.BLOG ? 'text-pink-600 font-semibold' : 'text-gray-600'} hover:text-pink-500 transition`}
+                  >
+                    Blog
+                  </button>
+                </>
+              )}
             </div>
 
             {/* Right Side Icons */}
             <div className="hidden md:flex items-center space-x-4">
-              {user && user.role === 'SALON_OWNER' && (
+              {/* My Bookings — only for regular customers */}
+              {user && isCustomer && (
                 <button 
-                  onClick={() => setCurrentPage(PageView.DASHBOARD)}
-                  className={`p-2 rounded-full transition ${currentPage === PageView.DASHBOARD ? 'text-pink-600 bg-pink-50' : 'text-gray-500 hover:text-pink-600 hover:bg-pink-50'}`}
-                  title="Salon Dashboard"
+                  onClick={() => setCurrentPage(PageView.MY_BOOKINGS)}
+                  className={`p-2 rounded-full transition ${currentPage === PageView.MY_BOOKINGS ? 'text-pink-600 bg-pink-50' : 'text-gray-500 hover:text-pink-600 hover:bg-pink-50'}`}
+                  title="My Bookings"
                 >
-                  <LayoutDashboard className="h-6 w-6" />
+                  <CalendarCheck className="h-6 w-6" />
                 </button>
               )}
-              {user && user.role === 'ADMIN' && (
-                <button 
-                  onClick={() => setCurrentPage(PageView.ADMIN)}
-                  className={`p-2 rounded-full transition ${currentPage === PageView.ADMIN ? 'text-purple-600 bg-purple-50' : 'text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}
-                  title="Admin Panel"
-                >
-                  <Shield className="h-6 w-6" />
+              {isCustomer && (
+                <button className="p-2 rounded-full text-gray-500 hover:text-pink-600 hover:bg-pink-50 transition">
+                  <Heart className="h-6 w-6" />
                 </button>
               )}
-              <button className="p-2 rounded-full text-gray-500 hover:text-pink-600 hover:bg-pink-50 transition">
-                <Heart className="h-6 w-6" />
-              </button>
               
               {user ? (
                 <div className="relative" ref={profileDropdownRef}>
                   <button 
                     onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
-                    className="flex items-center px-4 py-2 rounded-full bg-pink-50 text-pink-600 font-medium hover:bg-pink-100 transition space-x-2"
+                    className={`flex items-center px-4 py-2 rounded-full font-medium hover:opacity-90 transition space-x-2 ${
+                      isAdmin ? 'bg-purple-50 text-purple-600 hover:bg-purple-100' : 'bg-pink-50 text-pink-600 hover:bg-pink-100'
+                    }`}
                   >
-                    <div className="h-8 w-8 rounded-full bg-gradient-to-br from-pink-400 to-rose-500 flex items-center justify-center text-white font-semibold text-sm">
+                    <div className={`h-8 w-8 rounded-full flex items-center justify-center text-white font-semibold text-sm ${
+                      isAdmin ? 'bg-gradient-to-br from-purple-400 to-indigo-500' : 'bg-gradient-to-br from-pink-400 to-rose-500'
+                    }`}>
                       {user.name.charAt(0).toUpperCase()}
                     </div>
                     <span className="max-w-[120px] truncate">{user.name}</span>
@@ -136,7 +183,11 @@ export const Layout: React.FC<LayoutProps> = ({ children, setCurrentPage, curren
                       <div className="px-4 py-3 border-b border-gray-100">
                         <p className="text-sm font-semibold text-gray-900">{user.name}</p>
                         <p className="text-xs text-gray-500 truncate">{user.email}</p>
-                        <p className="text-xs text-pink-600 mt-1 font-medium">{user.role}</p>
+                        <span className={`inline-block text-xs mt-1 font-medium px-2 py-0.5 rounded-full ${
+                          isAdmin ? 'bg-purple-100 text-purple-700' : isSalonOwner ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-600'
+                        }`}>
+                          {isAdmin ? 'Admin' : isSalonOwner ? 'Salon Owner' : 'Customer'}
+                        </span>
                       </div>
                       <button
                         onClick={handleSignOut}
@@ -175,37 +226,74 @@ export const Layout: React.FC<LayoutProps> = ({ children, setCurrentPage, curren
         {isMenuOpen && (
           <div className="md:hidden bg-white border-b border-pink-100">
             <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
-              <button 
-                onClick={() => { setCurrentPage(PageView.LANDING); setIsMenuOpen(false); }}
-                className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-pink-600 hover:bg-pink-50"
-              >
-                Home
-              </button>
-              <button 
-                onClick={() => { setCurrentPage(PageView.SALON_LIST); setIsMenuOpen(false); }}
-                className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-pink-600 hover:bg-pink-50"
-              >
-                Find Salon
-              </button>
-              <button 
-                onClick={() => { setCurrentPage(PageView.OFFERS); setIsMenuOpen(false); }}
-                className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-pink-600 hover:bg-pink-50"
-              >
-                Offers
-              </button>
-               <button 
-                onClick={() => { setCurrentPage(PageView.BLOG); setIsMenuOpen(false); }}
-                className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-pink-600 hover:bg-pink-50"
-              >
-                Blog
-              </button>
-              {user && user.role === 'SALON_OWNER' && (
+              {/* Admin mobile nav */}
+              {isAdmin && (
+                <button 
+                  onClick={() => { setCurrentPage(PageView.ADMIN); setIsMenuOpen(false); }}
+                  className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-purple-700 hover:text-purple-600 hover:bg-purple-50"
+                >
+                  🛡️ Admin Panel
+                </button>
+              )}
+
+              {/* Salon Owner mobile nav */}
+              {isSalonOwner && (
                 <button 
                   onClick={() => { setCurrentPage(PageView.DASHBOARD); setIsMenuOpen(false); }}
                   className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-pink-600 hover:bg-pink-50"
                 >
-                  Salon Dashboard
+                  📊 Salon Dashboard
                 </button>
+              )}
+
+              {/* Customer / Guest mobile nav */}
+              {isCustomer && (
+                <>
+                  <button 
+                    onClick={() => { setCurrentPage(PageView.LANDING); setIsMenuOpen(false); }}
+                    className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-pink-600 hover:bg-pink-50"
+                  >
+                    Home
+                  </button>
+                  <button 
+                    onClick={() => { setCurrentPage(PageView.SALON_LIST); setIsMenuOpen(false); }}
+                    className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-pink-600 hover:bg-pink-50"
+                  >
+                    Find Salon
+                  </button>
+                  <button 
+                    onClick={() => { setCurrentPage(PageView.NEARBY_SALONS); setIsMenuOpen(false); }}
+                    className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-pink-600 hover:bg-pink-50"
+                  >
+                    📍 Nearby Salons
+                  </button>
+                  <button 
+                    onClick={() => { setCurrentPage(PageView.PRICE_COMPARISON); setIsMenuOpen(false); }}
+                    className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-pink-600 hover:bg-pink-50"
+                  >
+                    💰 Compare Prices
+                  </button>
+                  <button 
+                    onClick={() => { setCurrentPage(PageView.OFFERS); setIsMenuOpen(false); }}
+                    className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-pink-600 hover:bg-pink-50"
+                  >
+                    Offers
+                  </button>
+                  <button 
+                    onClick={() => { setCurrentPage(PageView.BLOG); setIsMenuOpen(false); }}
+                    className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-pink-600 hover:bg-pink-50"
+                  >
+                    Blog
+                  </button>
+                  {user && (
+                    <button 
+                      onClick={() => { setCurrentPage(PageView.MY_BOOKINGS); setIsMenuOpen(false); }}
+                      className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-pink-600 hover:bg-pink-50"
+                    >
+                      📅 My Bookings
+                    </button>
+                  )}
+                </>
               )}
               
               {user ? (
@@ -213,6 +301,11 @@ export const Layout: React.FC<LayoutProps> = ({ children, setCurrentPage, curren
                   <div className="px-3 py-2 mb-2">
                     <p className="text-sm font-semibold text-gray-900">{user.name}</p>
                     <p className="text-xs text-gray-500">{user.email}</p>
+                    <span className={`inline-block text-xs mt-1 font-medium px-2 py-0.5 rounded-full ${
+                      isAdmin ? 'bg-purple-100 text-purple-700' : isSalonOwner ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-600'
+                    }`}>
+                      {isAdmin ? 'Admin' : isSalonOwner ? 'Salon Owner' : 'Customer'}
+                    </span>
                   </div>
                   <button 
                     onClick={() => { handleSignOut(); setIsMenuOpen(false); }}

@@ -20,10 +20,10 @@ router.get('/analytics', authenticate, async (req: AuthRequest, res: Response) =
       return res.status(403).json({ message: 'Access denied. Salon owners only.' });
     }
 
-    // Get the salon owned by this user (for now, get first salon - in production, link salon to owner)
-    const salon = await prisma.salon.findFirst();
+    // Get the salon owned by this user
+    const salon = await prisma.salon.findFirst({ where: { ownerId: req.userId } });
     if (!salon) {
-      return res.status(404).json({ message: 'No salon found' });
+      return res.status(404).json({ message: 'No salon found for this owner' });
     }
 
     const now = new Date();
@@ -166,11 +166,12 @@ router.get('/schedule', authenticate, async (req: AuthRequest, res: Response) =>
     const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
 
     const salon = await prisma.salon.findFirst({
+      where: { ownerId: req.userId },
       include: { stylists: true }
     });
 
     if (!salon) {
-      return res.status(404).json({ message: 'No salon found' });
+      return res.status(404).json({ message: 'No salon found for this owner' });
     }
 
     // Get all appointments for the day
@@ -224,16 +225,19 @@ router.get('/schedule', authenticate, async (req: AuthRequest, res: Response) =>
           end: '18:00',
           isWorking: true
         },
-        appointments: stylistAppointments.map(apt => ({
-          id: apt.id,
-          time: new Date(apt.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          service: apt.service.name,
-          duration: apt.service.duration,
-          customer: apt.user.name,
-          customerEmail: apt.user.email,
-          price: apt.price,
-          status: apt.status
-        }))
+        appointments: stylistAppointments.map(apt => {
+          const d = new Date(apt.date);
+          return {
+            id: apt.id,
+            time: `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`,
+            service: apt.service.name,
+            duration: apt.service.duration,
+            customer: apt.user.name,
+            customerEmail: apt.user.email,
+            price: apt.price,
+            status: apt.status
+          };
+        })
       };
     });
 
