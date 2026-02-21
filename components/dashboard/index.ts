@@ -4,3 +4,4 @@ export { ServiceManagement } from './ServiceManagement';
 export { CustomerHistory } from './CustomerHistory';
 export { PromotionalTools } from './PromotionalTools';
 export { BookingManagement } from './BookingManagement';
+export { ChatManagement } from './ChatManagement';

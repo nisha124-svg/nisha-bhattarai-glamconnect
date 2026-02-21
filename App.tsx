@@ -36,6 +36,15 @@ const App: React.FC = () => {
     return null;
   };
 
+  // Helper to get current user ID
+  const getUserId = (): string | null => {
+    try {
+      const userStr = localStorage.getItem('user');
+      if (userStr) return JSON.parse(userStr).id;
+    } catch {}
+    return null;
+  };
+
   // Auto-redirect on app load based on role
   React.useEffect(() => {
     const role = getUserRole();
@@ -55,13 +64,47 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Socket.IO: join user room and listen for notifications
   React.useEffect(() => {
+    const userId = getUserId();
+    if (userId) {
+      socket.emit('join_user', userId);
+    }
+
     socket.on('booking_confirmed', (data: any) => {
       toast.success(`Booking confirmed for ${data.serviceName}!`);
     });
 
+    socket.on('booking_rejected', (data: any) => {
+      toast.error(`Booking for ${data.serviceName} was rejected${data.reason ? ': ' + data.reason : ''}`);
+    });
+
+    socket.on('booking_rescheduled', (data: any) => {
+      toast.info(`Booking for ${data.serviceName} has been rescheduled`);
+    });
+
+    socket.on('service_completed', (data: any) => {
+      toast.success(`Your ${data.serviceName} at ${data.salonName} is complete! Leave a review 🌟`);
+    });
+
+    socket.on('booking_request', (data: any) => {
+      toast.info(`New booking request from ${data.userName} for ${data.serviceName}`);
+    });
+
+    socket.on('new_notification', (data: any) => {
+      // Show subtle notification toast for other events
+      if (!['BOOKING_CONFIRMED', 'BOOKING_REJECTED', 'BOOKING_COMPLETED', 'BOOKING_REQUEST'].includes(data.type)) {
+        toast(data.message);
+      }
+    });
+
     return () => {
       socket.off('booking_confirmed');
+      socket.off('booking_rejected');
+      socket.off('booking_rescheduled');
+      socket.off('service_completed');
+      socket.off('booking_request');
+      socket.off('new_notification');
     };
   }, []);
 

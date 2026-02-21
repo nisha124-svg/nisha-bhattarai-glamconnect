@@ -220,4 +220,32 @@ export const membership = {
     api.post('/membership/calculate-discount', { originalPrice }),
 };
 
+// Reviews API
+export const reviews = {
+  getBySalon: (salonId: string) => api.get(`/reviews/${salonId}`),
+  create: (salonId: string, data: { rating: number; comment: string; appointmentId?: string }) =>
+    api.post(`/reviews/${salonId}`, data),
+  update: (reviewId: string, data: { rating?: number; comment?: string }) =>
+    api.put(`/reviews/${reviewId}`, data),
+  delete: (reviewId: string) => api.delete(`/reviews/${reviewId}`),
+  canReview: (salonId: string) => api.get(`/reviews/${salonId}/can-review`),
+};
+
+// Chat API
+export const chat = {
+  getMessages: (salonId: string, limit?: number) =>
+    api.get(`/chat/${salonId}${limit ? `?limit=${limit}` : ''}`),
+  sendMessage: (salonId: string, content: string, recipientId?: string) =>
+    api.post(`/chat/${salonId}`, { content, recipientId }),
+  getConversations: () => api.get('/chat/conversations/my-salon'),
+};
+
+// Notifications API
+export const notifications = {
+  getAll: () => api.get('/notifications'),
+  markAsRead: (id: string) => api.patch(`/notifications/${id}/read`),
+  markAllAsRead: () => api.patch('/notifications/read-all'),
+  delete: (id: string) => api.delete(`/notifications/${id}`),
+};
+
 export default api;

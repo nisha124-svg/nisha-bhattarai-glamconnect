@@ -55,6 +55,7 @@ model Salon {
   appointments    Appointment[]
   customerHistory CustomerHistory[]
   promoCodes      PromoCode[]
+  chatMessages    ChatMessage[]
 }
 
 model Service {
@@ -83,14 +84,16 @@ model Stylist {
 }
 
 model Review {
-  id        String   @id @default(uuid())
-  rating    Int
-  comment   String
-  date      DateTime @default(now())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  salonId   String
-  salon     Salon    @relation(fields: [salonId], references: [id])
+  id            String   @id @default(uuid())
+  rating        Int
+  comment       String
+  date          DateTime @default(now())
+  isVerified    Boolean  @default(false) // true if user completed a booking at this salon
+  appointmentId String?  // links review to a completed appointment
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  salonId       String
+  salon         Salon    @relation(fields: [salonId], references: [id])
 }
 
 model Appointment {
@@ -115,12 +118,26 @@ model Appointment {
 }
 
 model Notification {
-  id        String   @id @default(uuid())
+  id        String           @id @default(uuid())
   message   String
-  read      Boolean  @default(false)
+  type      NotificationType @default(GENERAL)
+  read      Boolean          @default(false)
+  link      String?          // optional deep-link context (e.g. appointmentId)
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  createdAt DateTime @default(now())
+  user      User             @relation(fields: [userId], references: [id])
+  createdAt DateTime         @default(now())
+}
+
+// Real-time Chat Messages
+model ChatMessage {
+  id         String   @id @default(uuid())
+  content    String
+  senderId   String
+  senderName String
+  senderRole String   // USER or SALON_OWNER
+  salonId    String
+  salon      Salon    @relation(fields: [salonId], references: [id])
+  createdAt  DateTime @default(now())
 }
 
 // Customer History - tracks customer preferences and notes
@@ -213,4 +230,16 @@ enum AppointmentStatus {
 enum DiscountType {
   PERCENTAGE
   FIXED
+}
+
+enum NotificationType {
+  GENERAL
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  BOOKING_REJECTED
+  BOOKING_RESCHEDULED
+  BOOKING_COMPLETED
+  BOOKING_REQUEST
+  NEW_REVIEW
+  CHAT_MESSAGE
 }

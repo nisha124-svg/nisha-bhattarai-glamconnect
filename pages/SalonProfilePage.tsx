@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Star, MapPin, Clock, Calendar, CheckCircle, Loader2, AlertCircle, Phone, Mail } from 'lucide-react';
+import { ArrowLeft, Star, MapPin, Clock, Calendar, CheckCircle, Loader2, AlertCircle, Phone, Mail, MessageCircle, Send, BadgeCheck } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Salon, Service, Stylist } from '../types';
 import { SalonMap } from '../components/GoogleMap';
+import { SalonChat } from '../components/SalonChat';
 
-import { appointments, salons as salonApi } from '../api/client';
+import { appointments, salons as salonApi, reviews as reviewsApi } from '../api/client';
 
 interface SalonProfilePageProps {
   salon: Salon;
@@ -36,6 +37,59 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
 
   // Check if user is logged in
   const isLoggedIn = !!localStorage.getItem('token');
+
+  // Chat state
+  const [showChat, setShowChat] = useState(false);
+
+  // Review state
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewHoverRating, setReviewHoverRating] = useState(0);
+  const [reviewComment, setReviewComment] = useState('');
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewSuccess, setReviewSuccess] = useState(false);
+  const [canReviewData, setCanReviewData] = useState<{ canReview: boolean; hasCompletedBooking: boolean } | null>(null);
+  const [salonReviews, setSalonReviews] = useState<any[]>(salon.reviews || []);
+
+  // Check review eligibility on mount
+  useEffect(() => {
+    if (isLoggedIn) {
+      reviewsApi.canReview(salon.id).then(res => {
+        setCanReviewData(res.data);
+      }).catch(() => {});
+      // Fetch full reviews with verified status
+      reviewsApi.getBySalon(salon.id).then(res => {
+        setSalonReviews(res.data);
+      }).catch(() => {});
+    }
+  }, [salon.id, isLoggedIn]);
+
+  const handleSubmitReview = async () => {
+    if (reviewRating === 0 || !reviewComment.trim()) {
+      setReviewError('Please provide a rating and comment');
+      return;
+    }
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      const response = await reviewsApi.create(salon.id, {
+        rating: reviewRating,
+        comment: reviewComment.trim(),
+      });
+      setSalonReviews(prev => [response.data, ...prev]);
+      setReviewSuccess(true);
+      setShowReviewForm(false);
+      setReviewRating(0);
+      setReviewComment('');
+      setCanReviewData({ canReview: false, hasCompletedBooking: true });
+      setTimeout(() => setReviewSuccess(false), 3000);
+    } catch (error: any) {
+      setReviewError(error.response?.data?.message || 'Failed to submit review');
+    } finally {
+      setReviewLoading(false);
+    }
+  };
 
   // Generate time slots based on service duration
   const generateTimeSlots = (duration: number): TimeSlot[] => {
@@ -198,7 +252,12 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
             </div>
           </div>
           <div className="mt-4 md:mt-0 flex space-x-3">
-            <Button variant="outline">Contact</Button>
+            <Button variant="outline" onClick={() => {
+              if (!isLoggedIn) { alert('Please sign in to chat'); return; }
+              setShowChat(true);
+            }}>
+              <MessageCircle className="h-4 w-4 mr-1" /> Chat
+            </Button>
             <Button variant="secondary">Favorite</Button>
           </div>
         </div>
@@ -252,21 +311,140 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
 
             {activeTab === 'reviews' && (
               <div className="space-y-6">
-                {salon.reviews.length > 0 ? (
-                  salon.reviews.map((review) => (
+                {/* Review Success Message */}
+                {reviewSuccess && (
+                  <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-center gap-2 text-green-700">
+                    <CheckCircle className="h-5 w-5" />
+                    <span className="font-medium">Your review has been submitted!</span>
+                  </div>
+                )}
+
+                {/* Write Review Button / Form */}
+                {isLoggedIn && canReviewData?.canReview && !showReviewForm && (
+                  <button
+                    onClick={() => setShowReviewForm(true)}
+                    className="w-full bg-gradient-to-r from-pink-500 to-rose-400 text-white rounded-xl p-4 flex items-center justify-center gap-2 font-semibold hover:from-pink-600 hover:to-rose-500 transition shadow-md"
+                  >
+                    <Star className="h-5 w-5" />
+                    Write a Review
+                    {canReviewData.hasCompletedBooking && (
+                      <span className="ml-2 bg-white/20 px-2 py-0.5 rounded-full text-xs">Verified Customer</span>
+                    )}
+                  </button>
+                )}
+
+                {/* Review Form */}
+                {showReviewForm && (
+                  <div className="bg-white border border-pink-100 rounded-xl p-6 shadow-md">
+                    <h4 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+                      <Star className="h-5 w-5 text-pink-500" />
+                      Write Your Review
+                    </h4>
+                    
+                    {/* Star Rating */}
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Rating</label>
+                      <div className="flex gap-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            onClick={() => setReviewRating(star)}
+                            onMouseEnter={() => setReviewHoverRating(star)}
+                            onMouseLeave={() => setReviewHoverRating(0)}
+                            className="p-1 transition-transform hover:scale-110"
+                          >
+                            <Star
+                              className={`h-8 w-8 ${
+                                star <= (reviewHoverRating || reviewRating)
+                                  ? 'text-yellow-400 fill-current'
+                                  : 'text-gray-300'
+                              } transition-colors`}
+                            />
+                          </button>
+                        ))}
+                        {reviewRating > 0 && (
+                          <span className="ml-3 text-sm text-gray-500 self-center">
+                            {['', 'Poor', 'Fair', 'Good', 'Very Good', 'Excellent'][reviewRating]}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Comment */}
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Your Experience</label>
+                      <textarea
+                        value={reviewComment}
+                        onChange={(e) => setReviewComment(e.target.value)}
+                        placeholder="Share your experience with this salon..."
+                        rows={4}
+                        className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-pink-500 focus:border-pink-500 resize-none"
+                      />
+                    </div>
+
+                    {canReviewData?.hasCompletedBooking && (
+                      <div className="mb-4 flex items-center gap-2 text-green-600 text-sm bg-green-50 rounded-lg p-2">
+                        <BadgeCheck className="h-4 w-4" />
+                        Your review will be marked as "Verified" (completed booking)
+                      </div>
+                    )}
+
+                    {reviewError && (
+                      <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm flex items-center gap-2">
+                        <AlertCircle className="h-4 w-4" />
+                        {reviewError}
+                      </div>
+                    )}
+
+                    <div className="flex gap-3">
+                      <Button
+                        variant="ghost"
+                        onClick={() => { setShowReviewForm(false); setReviewError(null); }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={handleSubmitReview}
+                        disabled={reviewRating === 0 || !reviewComment.trim() || reviewLoading}
+                      >
+                        {reviewLoading ? (
+                          <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Submitting...</>
+                        ) : (
+                          <><Send className="h-4 w-4 mr-1" /> Submit Review</>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Reviews List */}
+                {salonReviews.length > 0 ? (
+                  salonReviews.map((review: any) => (
                     <div key={review.id} className="bg-gray-50 rounded-xl p-6">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="font-bold text-gray-900">{review.user}</span>
-                        <span className="text-gray-400 text-sm">{review.date}</span>
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-gray-900">{review.user?.name || review.user}</span>
+                          {review.isVerified && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">
+                              <BadgeCheck className="h-3 w-3" />
+                              Verified
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-gray-400 text-sm">
+                          {new Date(review.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </span>
                       </div>
                       <div className="flex text-yellow-400 mb-2">
-                        {[...Array(review.rating)].map((_, i) => <Star key={i} className="h-4 w-4 fill-current" />)}
+                        {[...Array(5)].map((_, i) => (
+                          <Star key={i} className={`h-4 w-4 ${i < review.rating ? 'fill-current' : 'text-gray-300'}`} />
+                        ))}
                       </div>
                       <p className="text-gray-600">{review.comment}</p>
                     </div>
                   ))
                 ) : (
-                  <p className="text-gray-500 italic">No reviews yet.</p>
+                  <p className="text-gray-500 italic">No reviews yet. Be the first to review!</p>
                 )}
               </div>
             )}
@@ -611,6 +789,26 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
             </div>
           </div>
         </div>
+      )}
+
+      {/* Floating Chat Button */}
+      {isLoggedIn && !showChat && !showBookingModal && (
+        <button
+          onClick={() => setShowChat(true)}
+          className="fixed bottom-6 right-6 bg-pink-500 text-white p-4 rounded-full shadow-lg hover:bg-pink-600 transition-all hover:scale-105 z-40"
+          title="Chat with salon"
+        >
+          <MessageCircle className="h-6 w-6" />
+        </button>
+      )}
+
+      {/* Chat Modal */}
+      {showChat && (
+        <SalonChat
+          salonId={salon.id}
+          salonName={salon.name}
+          onClose={() => setShowChat(false)}
+        />
       )}
     </div>
   );

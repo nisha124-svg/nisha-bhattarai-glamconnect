@@ -1,6 +1,9 @@
 import React from 'react';
-import { Menu, X, User, Heart, Sparkles, LayoutDashboard, ChevronDown, LogOut, Shield, Navigation, DollarSign, CalendarCheck } from 'lucide-react';
+import { Menu, X, User, Heart, Sparkles, LayoutDashboard, ChevronDown, LogOut, Shield, Navigation, DollarSign, CalendarCheck, Bell } from 'lucide-react';
 import { PageView } from '../types';
+import { notifications as notificationsApi } from '../api/client';
+import { io, Socket } from 'socket.io-client';
+import { SalonChat } from './SalonChat';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -11,20 +14,186 @@ interface LayoutProps {
 export const Layout: React.FC<LayoutProps> = ({ children, setCurrentPage, currentPage }) => {
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = React.useState(false);
-  const [user, setUser] = React.useState<{ name: string; email: string; role: string } | null>(null);
+  const [user, setUser] = React.useState<{ name: string; email: string; role: string; id?: string } | null>(null);
+
+  // Notification state
+  const [notificationList, setNotificationList] = React.useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = React.useState(0);
+  const [showNotifications, setShowNotifications] = React.useState(false);
+  const notificationRef = React.useRef<HTMLDivElement>(null);
+  const socketRef = React.useRef<Socket | null>(null);
+
+  // Chat overlay state (for opening chat directly from notifications)
+  const [chatOverlay, setChatOverlay] = React.useState<{ salonId: string; salonName: string } | null>(null);
 
   React.useEffect(() => {
     // Check if user is logged in
     const userStr = localStorage.getItem('user');
     if (userStr) {
       try {
-        setUser(JSON.parse(userStr));
+        const parsed = JSON.parse(userStr);
+        setUser(parsed);
       } catch (e) {
         localStorage.removeItem('user');
         localStorage.removeItem('token');
       }
     }
   }, []);
+
+  // Fetch notifications & connect socket when user is logged in
+  React.useEffect(() => {
+    if (!user) return;
+
+    // Fetch notifications
+    const fetchNotifications = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        const res = await notificationsApi.getAll();
+        setNotificationList(res.data.notifications || []);
+        setUnreadCount(res.data.unreadCount || 0);
+      } catch (e) {
+        console.error('Error fetching notifications:', e);
+      }
+    };
+    fetchNotifications();
+
+    // Connect socket for real-time notifications
+    const socket = io('http://localhost:5000');
+    socketRef.current = socket;
+
+    if (user.id) {
+      socket.emit('join_user', user.id);
+    }
+
+    socket.on('new_notification', (data: any) => {
+      setUnreadCount(prev => prev + 1);
+      setNotificationList(prev => [{
+        id: `temp_${Date.now()}`,
+        message: data.message,
+        type: data.type,
+        link: data.link || null,
+        salonName: data.salonName || null,
+        read: false,
+        createdAt: new Date().toISOString(),
+      }, ...prev]);
+    });
+
+    // Also listen for booking events for toast notifications
+    socket.on('booking_confirmed', (data: any) => {
+      // Refresh notifications
+      fetchNotifications();
+    });
+    socket.on('booking_rejected', () => fetchNotifications());
+    socket.on('service_completed', () => fetchNotifications());
+    socket.on('booking_rescheduled', () => fetchNotifications());
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [user?.id]);
+
+  // Close notification panel when clicking outside
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        setShowNotifications(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleMarkAllRead = async () => {
+    try {
+      await notificationsApi.markAllAsRead();
+      setUnreadCount(0);
+      setNotificationList(prev => prev.map(n => ({ ...n, read: true })));
+    } catch (e) {
+      console.error('Error marking notifications as read:', e);
+    }
+  };
+
+  const handleMarkOneRead = async (id: string) => {
+    try {
+      await notificationsApi.markAsRead(id);
+      setUnreadCount(prev => Math.max(0, prev - 1));
+      setNotificationList(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    } catch (e) {
+      console.error('Error marking notification as read:', e);
+    }
+  };
+
+  const handleNotificationClick = (notif: any) => {
+    if (!notif.read) handleMarkOneRead(notif.id);
+    setShowNotifications(false);
+
+    const role = user?.role;
+    const type = notif.type;
+
+    switch (type) {
+      case 'CHAT_MESSAGE':
+        if (role === 'SALON_OWNER') {
+          // Signal dashboard to open the chat tab
+          localStorage.setItem('openDashboardTab', 'chat');
+          setCurrentPage(PageView.DASHBOARD);
+        } else if (role === 'USER' && notif.link) {
+          // Open chat overlay for customer
+          const sName = notif.salonName || notif.message?.replace('New reply from ', '') || 'Salon';
+          setChatOverlay({ salonId: notif.link, salonName: sName });
+        } else if (role === 'ADMIN') {
+          setCurrentPage(PageView.ADMIN);
+        }
+        break;
+      case 'BOOKING_REQUEST':
+      case 'BOOKING_RESCHEDULED':
+        if (role === 'SALON_OWNER') setCurrentPage(PageView.DASHBOARD);
+        else if (role === 'ADMIN') setCurrentPage(PageView.ADMIN);
+        else setCurrentPage(PageView.MY_BOOKINGS);
+        break;
+      case 'BOOKING_CONFIRMED':
+      case 'BOOKING_CANCELLED':
+      case 'BOOKING_REJECTED':
+      case 'BOOKING_COMPLETED':
+        if (role === 'ADMIN') setCurrentPage(PageView.ADMIN);
+        else if (role === 'SALON_OWNER') setCurrentPage(PageView.DASHBOARD);
+        else setCurrentPage(PageView.MY_BOOKINGS);
+        break;
+      case 'NEW_REVIEW':
+        if (role === 'SALON_OWNER') setCurrentPage(PageView.DASHBOARD);
+        else if (role === 'ADMIN') setCurrentPage(PageView.ADMIN);
+        break;
+      default:
+        break;
+    }
+  };
+
+  const getNotificationIcon = (type: string) => {
+    switch (type) {
+      case 'BOOKING_CONFIRMED': return '✅';
+      case 'BOOKING_CANCELLED': return '❌';
+      case 'BOOKING_REJECTED': return '🚫';
+      case 'BOOKING_RESCHEDULED': return '🔄';
+      case 'BOOKING_COMPLETED': return '🎉';
+      case 'BOOKING_REQUEST': return '📋';
+      case 'NEW_REVIEW': return '⭐';
+      case 'CHAT_MESSAGE': return '💬';
+      default: return '🔔';
+    }
+  };
+
+  const formatTimeAgo = (dateStr: string) => {
+    const now = new Date();
+    const date = new Date(dateStr);
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
+  };
 
   const handleSignOut = () => {
     localStorage.removeItem('token');
@@ -144,6 +313,70 @@ export const Layout: React.FC<LayoutProps> = ({ children, setCurrentPage, curren
 
             {/* Right Side Icons */}
             <div className="hidden md:flex items-center space-x-4">
+              {/* Notification Bell — for all logged-in users */}
+              {user && (
+                <div className="relative" ref={notificationRef}>
+                  <button
+                    onClick={() => setShowNotifications(!showNotifications)}
+                    className={`p-2 rounded-full transition relative ${showNotifications ? 'text-pink-600 bg-pink-50' : 'text-gray-500 hover:text-pink-600 hover:bg-pink-50'}`}
+                    title="Notifications"
+                  >
+                    <Bell className="h-6 w-6" />
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 h-5 w-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-white">
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Notification Panel */}
+                  {showNotifications && (
+                    <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden animate-in slide-in-from-top-2 duration-200 z-50">
+                      <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                        <h4 className="font-bold text-gray-900 text-sm">Notifications</h4>
+                        {unreadCount > 0 && (
+                          <button
+                            onClick={handleMarkAllRead}
+                            className="text-xs text-pink-600 hover:text-pink-700 font-medium"
+                          >
+                            Mark all read
+                          </button>
+                        )}
+                      </div>
+                      <div className="max-h-96 overflow-y-auto">
+                        {notificationList.length === 0 ? (
+                          <div className="p-8 text-center text-gray-400">
+                            <Bell className="h-8 w-8 mx-auto mb-2 text-gray-300" />
+                            <p className="text-sm">No notifications yet</p>
+                          </div>
+                        ) : (
+                          notificationList.slice(0, 20).map((notif) => (
+                            <div
+                              key={notif.id}
+                              onClick={() => handleNotificationClick(notif)}
+                              className={`px-4 py-3 border-b border-gray-50 cursor-pointer transition hover:bg-gray-50 flex gap-3 ${
+                                !notif.read ? 'bg-pink-50/50' : ''
+                              }`}
+                            >
+                              <span className="text-lg flex-shrink-0 mt-0.5">{getNotificationIcon(notif.type)}</span>
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-sm leading-snug ${!notif.read ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>
+                                  {notif.message}
+                                </p>
+                                <p className="text-xs text-gray-400 mt-1">{formatTimeAgo(notif.createdAt)}</p>
+                              </div>
+                              {!notif.read && (
+                                <span className="h-2 w-2 bg-pink-500 rounded-full flex-shrink-0 mt-2" />
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* My Bookings — only for regular customers */}
               {user && isCustomer && (
                 <button 
@@ -383,6 +616,15 @@ export const Layout: React.FC<LayoutProps> = ({ children, setCurrentPage, curren
           </div>
         </div>
       </footer>
+
+      {/* Chat overlay triggered by notification click */}
+      {chatOverlay && (
+        <SalonChat
+          salonId={chatOverlay.salonId}
+          salonName={chatOverlay.salonName}
+          onClose={() => setChatOverlay(null)}
+        />
+      )}
     </div>
   );
 };

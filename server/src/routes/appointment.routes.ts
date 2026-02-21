@@ -86,18 +86,43 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
     const io = req.app.get('io');
     if (io) {
       if (initialStatus === 'CONFIRMED') {
-        io.emit('booking_confirmed', {
+        io.to(`user_${req.userId}`).emit('booking_confirmed', {
           serviceName: appointment.service.name,
           userName: appointment.user.name,
           date: appointment.date
+        });
+        // Create notification for the customer
+        await prisma.notification.create({
+          data: {
+            message: `Your booking for ${appointment.service.name} at ${appointment.salon.name} has been confirmed!`,
+            type: 'BOOKING_CONFIRMED',
+            userId: req.userId!,
+            link: appointment.id,
+          }
         });
       } else {
         // Notify salon owner about new booking request
-        io.emit('booking_request', {
-          serviceName: appointment.service.name,
-          userName: appointment.user.name,
-          date: appointment.date
-        });
+        const salonData = await prisma.salon.findUnique({ where: { id: salonId }, select: { ownerId: true } });
+        if (salonData?.ownerId) {
+          io.to(`user_${salonData.ownerId}`).emit('booking_request', {
+            serviceName: appointment.service.name,
+            userName: appointment.user.name,
+            date: appointment.date
+          });
+          await prisma.notification.create({
+            data: {
+              message: `New booking request from ${appointment.user.name} for ${appointment.service.name}`,
+              type: 'BOOKING_REQUEST',
+              userId: salonData.ownerId,
+              link: appointment.id,
+            }
+          });
+          io.to(`user_${salonData.ownerId}`).emit('new_notification', {
+            message: `New booking request from ${appointment.user.name}`,
+            type: 'BOOKING_REQUEST',
+            link: appointment.id,
+          });
+        }
       }
     }
 
@@ -307,12 +332,29 @@ router.patch('/:id/reschedule', authenticate, async (req: AuthRequest, res: Resp
     // Emit socket event for real-time notification
     const io = req.app.get('io');
     if (io) {
-      io.emit('booking_rescheduled', {
-        serviceName: updatedAppointment.service.name,
-        userName: updatedAppointment.user.name,
-        oldDate: appointment.date,
-        newDate: updatedAppointment.date
-      });
+      // Notify the salon owner
+      const salonOwner = await prisma.salon.findUnique({ where: { id: appointment.salonId }, select: { ownerId: true } });
+      if (salonOwner?.ownerId) {
+        io.to(`user_${salonOwner.ownerId}`).emit('booking_rescheduled', {
+          serviceName: updatedAppointment.service.name,
+          userName: updatedAppointment.user.name,
+          oldDate: appointment.date,
+          newDate: updatedAppointment.date
+        });
+        io.to(`user_${salonOwner.ownerId}`).emit('new_notification', {
+          message: `${updatedAppointment.user.name} rescheduled their ${updatedAppointment.service.name} booking`,
+          type: 'BOOKING_RESCHEDULED',
+          link: updatedAppointment.id,
+        });
+        await prisma.notification.create({
+          data: {
+            message: `${updatedAppointment.user.name} rescheduled their ${updatedAppointment.service.name} booking`,
+            type: 'BOOKING_RESCHEDULED',
+            userId: salonOwner.ownerId,
+            link: updatedAppointment.id,
+          }
+        });
+      }
     }
 
     // Send email notification about rescheduling
@@ -476,12 +518,27 @@ router.patch('/:id/accept', authenticate, async (req: AuthRequest, res: Response
     // Notify customer
     const io = req.app.get('io');
     if (io) {
-      io.emit('booking_confirmed', {
+      io.to(`user_${updated.userId}`).emit('booking_confirmed', {
         serviceName: updated.service.name,
         userName: updated.user.name,
         date: updated.date
       });
+      io.to(`user_${updated.userId}`).emit('new_notification', {
+        message: `Your booking for ${updated.service.name} has been confirmed!`,
+        type: 'BOOKING_CONFIRMED',
+        link: updated.id,
+      });
     }
+
+    // Persist notification
+    await prisma.notification.create({
+      data: {
+        message: `Your booking for ${updated.service.name} at ${updated.salon.name} has been confirmed!`,
+        type: 'BOOKING_CONFIRMED',
+        userId: updated.userId,
+        link: updated.id,
+      }
+    });
 
     // Send confirmation email
     try {
@@ -549,12 +606,27 @@ router.patch('/:id/reject', authenticate, async (req: AuthRequest, res: Response
 
     const io = req.app.get('io');
     if (io) {
-      io.emit('booking_rejected', {
+      io.to(`user_${updated.userId}`).emit('booking_rejected', {
         serviceName: updated.service.name,
         userName: updated.user.name,
         reason
       });
+      io.to(`user_${updated.userId}`).emit('new_notification', {
+        message: `Your booking for ${updated.service.name} was rejected${reason ? ': ' + reason : ''}`,
+        type: 'BOOKING_REJECTED',
+        link: updated.id,
+      });
     }
+
+    // Persist notification
+    await prisma.notification.create({
+      data: {
+        message: `Your booking for ${updated.service.name} at ${updated.salon.name} was rejected${reason ? ': ' + reason : ''}`,
+        type: 'BOOKING_REJECTED',
+        userId: updated.userId,
+        link: updated.id,
+      }
+    });
 
     // Send cancellation SMS
     if (updated.user.phone) {
@@ -609,12 +681,27 @@ router.patch('/:id/complete', authenticate, async (req: AuthRequest, res: Respon
 
     const io = req.app.get('io');
     if (io) {
-      io.emit('service_completed', {
+      io.to(`user_${updated.userId}`).emit('service_completed', {
         serviceName: updated.service.name,
         userName: updated.user.name,
         salonName: updated.salon.name
       });
+      io.to(`user_${updated.userId}`).emit('new_notification', {
+        message: `Your ${updated.service.name} at ${updated.salon.name} is complete! Leave a review.`,
+        type: 'BOOKING_COMPLETED',
+        link: updated.id,
+      });
     }
+
+    // Persist notification
+    await prisma.notification.create({
+      data: {
+        message: `Your ${updated.service.name} at ${updated.salon.name} is complete! We'd love to hear your feedback.`,
+        type: 'BOOKING_COMPLETED',
+        userId: updated.userId,
+        link: updated.id,
+      }
+    });
 
     res.json({ message: 'Service marked as completed', appointment: updated });
   } catch (error) {

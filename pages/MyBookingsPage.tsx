@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, MapPin, Scissors, User, AlertCircle, Loader2, RefreshCw, XCircle, CheckCircle, ChevronDown, Search } from 'lucide-react';
+import { Calendar, Clock, MapPin, Scissors, User, AlertCircle, Loader2, RefreshCw, XCircle, CheckCircle, ChevronDown, Search, Star, Send, BadgeCheck } from 'lucide-react';
 import { Button } from '../components/Button';
-import { appointments } from '../api/client';
+import { appointments, reviews as reviewsApi } from '../api/client';
 
 interface BookingAppointment {
   id: string;
@@ -32,6 +32,39 @@ export const MyBookingsPage: React.FC = () => {
   // Cancel state
   const [cancelBookingId, setCancelBookingId] = useState<string | null>(null);
   const [cancelLoading, setCancelLoading] = useState(false);
+
+  // Review state
+  const [reviewBooking, setReviewBooking] = useState<BookingAppointment | null>(null);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewHoverRating, setReviewHoverRating] = useState(0);
+  const [reviewComment, setReviewComment] = useState('');
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewedBookings, setReviewedBookings] = useState<Set<string>>(new Set());
+
+  const handleSubmitReview = async () => {
+    if (!reviewBooking || reviewRating === 0 || !reviewComment.trim()) {
+      setReviewError('Please provide a rating and comment');
+      return;
+    }
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      await reviewsApi.create(reviewBooking.salon.id, {
+        rating: reviewRating,
+        comment: reviewComment.trim(),
+        appointmentId: reviewBooking.id,
+      });
+      setReviewedBookings(prev => new Set(prev).add(reviewBooking.salon.id));
+      setReviewBooking(null);
+      setReviewRating(0);
+      setReviewComment('');
+    } catch (error: any) {
+      setReviewError(error.response?.data?.message || 'Failed to submit review');
+    } finally {
+      setReviewLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchBookings();
@@ -375,6 +408,31 @@ export const MyBookingsPage: React.FC = () => {
                         </Button>
                       </div>
                     )}
+
+                    {/* Write Review for completed bookings */}
+                    {booking.status === 'COMPLETED' && !reviewedBookings.has(booking.salon.id) && (
+                      <div className="flex gap-2 pt-2 border-t border-gray-100">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setReviewBooking(booking);
+                            setReviewRating(0);
+                            setReviewComment('');
+                            setReviewError(null);
+                          }}
+                          className="bg-yellow-500 hover:bg-yellow-600"
+                        >
+                          <Star className="h-3.5 w-3.5 mr-1" /> Write Review
+                        </Button>
+                      </div>
+                    )}
+                    {booking.status === 'COMPLETED' && reviewedBookings.has(booking.salon.id) && (
+                      <div className="flex gap-2 pt-2 border-t border-gray-100">
+                        <span className="text-xs text-green-600 bg-green-50 px-3 py-1.5 rounded-lg flex items-center gap-1">
+                          <BadgeCheck className="h-3.5 w-3.5" /> Review submitted
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -531,6 +589,97 @@ export const MyBookingsPage: React.FC = () => {
                   <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Rescheduling...</>
                 ) : (
                   <><RefreshCw className="h-4 w-4 mr-1" /> Confirm Reschedule</>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Write Review Modal */}
+      {reviewBooking && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95">
+            <div className="p-6 border-b border-gray-100 bg-yellow-50">
+              <h3 className="font-bold text-lg text-gray-800 flex items-center gap-2">
+                <Star className="h-5 w-5 text-yellow-500" /> Write a Review
+              </h3>
+              <p className="text-sm text-gray-500 mt-1">
+                {reviewBooking.salon.name} — {reviewBooking.service.name}
+              </p>
+            </div>
+
+            <div className="p-6">
+              {/* Star Rating */}
+              <div className="mb-5">
+                <label className="block text-sm font-medium text-gray-700 mb-2">How was your experience?</label>
+                <div className="flex gap-1 justify-center">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      onClick={() => setReviewRating(star)}
+                      onMouseEnter={() => setReviewHoverRating(star)}
+                      onMouseLeave={() => setReviewHoverRating(0)}
+                      className="p-1 transition-transform hover:scale-110"
+                    >
+                      <Star
+                        className={`h-10 w-10 ${
+                          star <= (reviewHoverRating || reviewRating)
+                            ? 'text-yellow-400 fill-current'
+                            : 'text-gray-300'
+                        } transition-colors`}
+                      />
+                    </button>
+                  ))}
+                </div>
+                {reviewRating > 0 && (
+                  <p className="text-center text-sm text-gray-500 mt-2">
+                    {['', 'Poor', 'Fair', 'Good', 'Very Good', 'Excellent'][reviewRating]}
+                  </p>
+                )}
+              </div>
+
+              {/* Comment */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Tell us more</label>
+                <textarea
+                  value={reviewComment}
+                  onChange={(e) => setReviewComment(e.target.value)}
+                  placeholder="Share details about your experience..."
+                  rows={4}
+                  className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-pink-500 focus:border-pink-500 resize-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 text-green-600 text-sm bg-green-50 rounded-lg p-2 mb-4">
+                <BadgeCheck className="h-4 w-4" />
+                Your review will be marked as "Verified" (completed booking)
+              </div>
+
+              {reviewError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4" />
+                  {reviewError}
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-gray-100 flex justify-between bg-gray-50">
+              <Button
+                variant="ghost"
+                onClick={() => setReviewBooking(null)}
+                disabled={reviewLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSubmitReview}
+                disabled={reviewRating === 0 || !reviewComment.trim() || reviewLoading}
+              >
+                {reviewLoading ? (
+                  <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Submitting...</>
+                ) : (
+                  <><Send className="h-4 w-4 mr-1" /> Submit Review</>
                 )}
               </Button>
             </div>

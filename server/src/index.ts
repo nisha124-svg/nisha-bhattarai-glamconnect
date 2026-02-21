@@ -14,6 +14,9 @@ import adminRoutes from './routes/admin.routes';
 import paymentRoutes from './routes/payment.routes';
 import loyaltyRoutes from './routes/loyalty.routes';
 import membershipRoutes from './routes/membership.routes';
+import chatRoutes from './routes/chat.routes';
+import reviewRoutes from './routes/review.routes';
+import notificationRoutes from './routes/notification.routes';
 
 dotenv.config();
 
@@ -43,10 +46,45 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/loyalty', loyaltyRoutes);
 app.use('/api/membership', membershipRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/notifications', notificationRoutes);
 
-// Socket.io connection
+// Socket.io connection with room management
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
+
+    // Join user's personal room for targeted notifications
+    socket.on('join_user', (userId: string) => {
+        socket.join(`user_${userId}`);
+        console.log(`User ${userId} joined personal room`);
+    });
+
+    // Join a salon chat room
+    socket.on('join_salon_chat', (salonId: string) => {
+        socket.join(`salon_${salonId}`);
+        console.log(`Socket ${socket.id} joined salon_${salonId} chat`);
+    });
+
+    // Leave a salon chat room
+    socket.on('leave_salon_chat', (salonId: string) => {
+        socket.leave(`salon_${salonId}`);
+        console.log(`Socket ${socket.id} left salon_${salonId} chat`);
+    });
+
+    // Handle typing indicators
+    socket.on('typing', (data: { salonId: string; userName: string }) => {
+        socket.to(`salon_${data.salonId}`).emit('user_typing', {
+            userName: data.userName,
+            salonId: data.salonId,
+        });
+    });
+
+    socket.on('stop_typing', (data: { salonId: string }) => {
+        socket.to(`salon_${data.salonId}`).emit('user_stop_typing', {
+            salonId: data.salonId,
+        });
+    });
 
     socket.on('disconnect', () => {
         console.log('User disconnected:', socket.id);

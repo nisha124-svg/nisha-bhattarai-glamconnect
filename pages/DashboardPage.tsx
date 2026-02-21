@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   BarChart3, Calendar, Settings, Users, Tag, 
-  LayoutDashboard, ChevronRight, ClipboardList 
+  LayoutDashboard, ChevronRight, ClipboardList, MessageCircle 
 } from 'lucide-react';
 import { 
   AnalyticsDashboard, 
@@ -9,10 +9,11 @@ import {
   ServiceManagement, 
   CustomerHistory, 
   PromotionalTools,
-  BookingManagement 
+  BookingManagement,
+  ChatManagement 
 } from '../components/dashboard';
 
-type TabId = 'analytics' | 'bookings' | 'schedule' | 'services' | 'customers' | 'promos';
+type TabId = 'analytics' | 'bookings' | 'schedule' | 'services' | 'customers' | 'promos' | 'chat';
 
 interface Tab {
   id: TabId;
@@ -58,10 +59,25 @@ const tabs: Tab[] = [
     icon: <Tag className="h-5 w-5" />,
     description: 'Create discount codes'
   },
+  { 
+    id: 'chat', 
+    label: 'Messages', 
+    icon: <MessageCircle className="h-5 w-5" />,
+    description: 'Chat with customers'
+  },
 ];
 
 export const DashboardPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('analytics');
+
+  // Check if we should auto-open a specific tab (e.g. from notification click)
+  React.useEffect(() => {
+    const openTab = localStorage.getItem('openDashboardTab');
+    if (openTab && tabs.some(t => t.id === openTab)) {
+      setActiveTab(openTab as TabId);
+      localStorage.removeItem('openDashboardTab');
+    }
+  }, []);
 
   const renderContent = () => {
     switch (activeTab) {
@@ -77,6 +93,8 @@ export const DashboardPage: React.FC = () => {
         return <CustomerHistory />;
       case 'promos':
         return <PromotionalTools />;
+      case 'chat':
+        return <ChatManagement />;
       default:
         return <AnalyticsDashboard />;
     }
