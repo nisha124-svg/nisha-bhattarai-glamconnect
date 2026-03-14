@@ -12,7 +12,7 @@ const router = Router();
  */
 router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
   try {
-    const { salonId, serviceId, stylistId, date, price } = req.body;
+    const { salonId, serviceId, stylistId, date, price, paymentMethod, paymentIntentId, loyaltyPointsUsed, loyaltyDiscount } = req.body;
 
     // Input validation
     if (!salonId || !serviceId || !stylistId || !date || !price) {
@@ -72,7 +72,12 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
         stylistId,
         date: appointmentDate,
         price,
-        status: initialStatus
+        status: initialStatus,
+        paymentMethod: paymentMethod || 'PAY_AT_SALON',
+        paymentStatus: paymentMethod === 'ONLINE' ? 'PAID' : 'PENDING',
+        paymentIntentId: paymentIntentId || null,
+        loyaltyPointsUsed: loyaltyPointsUsed || 0,
+        loyaltyDiscount: loyaltyDiscount || 0,
       },
       include: {
         salon: true,
@@ -675,9 +680,61 @@ router.patch('/:id/complete', authenticate, async (req: AuthRequest, res: Respon
 
     const updated = await prisma.appointment.update({
       where: { id: req.params.id },
-      data: { status: 'COMPLETED' },
-      include: { salon: true, service: true, stylist: true, user: { select: { name: true, email: true, phone: true } } }
+      data: { 
+        status: 'COMPLETED',
+        paymentStatus: 'PAID', // Mark as paid on completion (covers pay-at-salon too)
+      },
+      include: { salon: true, service: true, stylist: true, user: { select: { id: true, name: true, email: true, phone: true, membershipTier: true, loyaltyPoints: true } } }
     });
+
+    // --- Auto-earn loyalty points ---
+    const LOYALTY_CONFIG = {
+      pointsMultiplier: 100, // Spend NPR 100 to get 1 point
+      tiers: {
+        BASIC: { bonus: 1 },
+        SILVER: { bonus: 1.25 },
+        GOLD: { bonus: 1.5 },
+        PLATINUM: { bonus: 2 },
+      }
+    };
+    const tier = LOYALTY_CONFIG.tiers[(updated.user as any).membershipTier as keyof typeof LOYALTY_CONFIG.tiers] || LOYALTY_CONFIG.tiers.BASIC;
+    const basePoints = Math.floor(updated.price / LOYALTY_CONFIG.pointsMultiplier);
+    const bonusPoints = Math.floor(basePoints * (tier.bonus - 1));
+    const totalPointsEarned = basePoints + bonusPoints;
+
+    if (totalPointsEarned > 0) {
+      await prisma.$transaction([
+        prisma.loyaltyTransaction.create({
+          data: {
+            userId: updated.userId,
+            points: totalPointsEarned,
+            type: 'EARNED',
+            description: `Earned from ${updated.service.name} at ${updated.salon.name} (NPR ${updated.price})`,
+            appointmentId: updated.id,
+          }
+        }),
+        prisma.user.update({
+          where: { id: updated.userId },
+          data: {
+            loyaltyPoints: { increment: totalPointsEarned },
+            totalSpent: { increment: updated.price },
+          }
+        })
+      ]);
+
+      // Check and update tier
+      const updatedUser = await prisma.user.findUnique({ where: { id: updated.userId }, select: { loyaltyPoints: true } });
+      if (updatedUser) {
+        const pts = updatedUser.loyaltyPoints;
+        let newTier = 'BASIC';
+        if (pts >= 5000) newTier = 'PLATINUM';
+        else if (pts >= 2000) newTier = 'GOLD';
+        else if (pts >= 500) newTier = 'SILVER';
+        if (newTier !== (updated.user as any).membershipTier) {
+          await prisma.user.update({ where: { id: updated.userId }, data: { membershipTier: newTier } });
+        }
+      }
+    }
 
     const io = req.app.get('io');
     if (io) {
@@ -687,7 +744,7 @@ router.patch('/:id/complete', authenticate, async (req: AuthRequest, res: Respon
         salonName: updated.salon.name
       });
       io.to(`user_${updated.userId}`).emit('new_notification', {
-        message: `Your ${updated.service.name} at ${updated.salon.name} is complete! Leave a review.`,
+        message: `Your ${updated.service.name} at ${updated.salon.name} is complete!${totalPointsEarned > 0 ? ` You earned ${totalPointsEarned} loyalty points!` : ''} Leave a review.`,
         type: 'BOOKING_COMPLETED',
         link: updated.id,
       });
@@ -696,14 +753,14 @@ router.patch('/:id/complete', authenticate, async (req: AuthRequest, res: Respon
     // Persist notification
     await prisma.notification.create({
       data: {
-        message: `Your ${updated.service.name} at ${updated.salon.name} is complete! We'd love to hear your feedback.`,
+        message: `Your ${updated.service.name} at ${updated.salon.name} is complete!${totalPointsEarned > 0 ? ` You earned ${totalPointsEarned} loyalty points!` : ''} We'd love to hear your feedback.`,
         type: 'BOOKING_COMPLETED',
         userId: updated.userId,
         link: updated.id,
       }
     });
 
-    res.json({ message: 'Service marked as completed', appointment: updated });
+    res.json({ message: 'Service marked as completed', appointment: updated, loyaltyPointsEarned: totalPointsEarned });
   } catch (error) {
     console.error('Error completing appointment:', error);
     res.status(500).json({ message: 'Error completing appointment.' });

@@ -7,20 +7,68 @@ const router = Router();
 /**
  * Get reviews for a salon
  * GET /api/reviews/:salonId
+ * 
+ * Access control:
+ * - ADMIN: sees all reviews (full details)
+ * - SALON_OWNER (own salon): sees all reviews for their salon
+ * - Everyone else: gets only aggregate rating data (no individual reviews)
  */
-router.get('/:salonId', async (req, res) => {
+router.get('/:salonId', async (req: any, res) => {
   try {
     const { salonId } = req.params;
 
-    const reviews = await prisma.review.findMany({
-      where: { salonId },
-      include: {
-        user: { select: { name: true } },
-      },
-      orderBy: { date: 'desc' },
-    });
+    // Try to authenticate (optional — public route still works)
+    let userId: string | null = null;
+    let userRole: string | null = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const jwt = require('jsonwebtoken');
+        const token = authHeader.split(' ')[1];
+        const decoded: any = jwt.verify(token, process.env.JWT_SECRET);
+        userId = decoded.userId;
+        const user = await prisma.user.findUnique({ where: { id: userId! }, select: { role: true } });
+        userRole = user?.role || null;
+      } catch (e) {
+        // Token invalid — treat as unauthenticated
+      }
+    }
 
-    res.json(reviews);
+    // Check if the requester is an ADMIN or the salon's own owner
+    let canSeeReviews = false;
+
+    if (userRole === 'ADMIN') {
+      canSeeReviews = true;
+    } else if (userRole === 'SALON_OWNER' && userId) {
+      const salon = await prisma.salon.findUnique({ where: { id: salonId }, select: { ownerId: true } });
+      if (salon && salon.ownerId === userId) {
+        canSeeReviews = true;
+      }
+    }
+
+    if (canSeeReviews) {
+      // Return full review details
+      const reviews = await prisma.review.findMany({
+        where: { salonId },
+        include: {
+          user: { select: { name: true } },
+        },
+        orderBy: { date: 'desc' },
+      });
+      return res.json(reviews);
+    } else {
+      // Public: return only aggregate rating info, no individual reviews
+      const salon = await prisma.salon.findUnique({
+        where: { id: salonId },
+        select: { rating: true, reviewCount: true },
+      });
+      return res.json({
+        restricted: true,
+        rating: salon?.rating || 0,
+        reviewCount: salon?.reviewCount || 0,
+        message: 'Individual reviews are only visible to the salon owner and admin.',
+      });
+    }
   } catch (error) {
     console.error('Error fetching reviews:', error);
     res.status(500).json({ message: 'Error fetching reviews.' });

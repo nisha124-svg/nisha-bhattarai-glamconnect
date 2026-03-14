@@ -15,6 +15,13 @@ model User {
   phone         String?
   role          Role     @default(USER)
   isApproved    Boolean  @default(true)
+  salonApplicationName        String?
+  salonApplicationDescription String?
+  ownershipProofUrl           String?
+  locationImageUrls           String[] @default([])
+  applicationSubmittedAt      DateTime?
+  applicationReviewedAt       DateTime?
+  applicationReviewNote       String?
   loyaltyPoints Int      @default(0)
   totalSpent    Float    @default(0)
   membershipTier String  @default("BASIC") // BASIC, SILVER, GOLD, PLATINUM
@@ -101,6 +108,13 @@ model Appointment {
   date      DateTime
   status    AppointmentStatus @default(CONFIRMED)
   price     Float
+  
+  // Payment fields
+  paymentMethod  String  @default("PAY_AT_SALON") // PAY_AT_SALON or ONLINE
+  paymentStatus  String  @default("PENDING")      // PENDING, PAID, REFUNDED
+  paymentIntentId String? // Stripe PaymentIntent ID (null for pay-at-salon)
+  loyaltyPointsUsed  Int  @default(0)  // Points redeemed for this booking
+  loyaltyDiscount    Float @default(0) // NPR discount from points
   
   userId    String
   user      User     @relation(fields: [userId], references: [id])

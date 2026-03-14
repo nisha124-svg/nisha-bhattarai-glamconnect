@@ -1,6 +1,9 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 import { Role } from '@prisma/client';
 import prisma from '../config/database';
 import { validateEmail, validatePassword, validateName, sanitizeInput } from '../utils/validation';
@@ -9,6 +12,122 @@ import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 
 const router = Router();
 
+const ownerApplicationDir = path.join(process.cwd(), 'uploads', 'owner-applications');
+if (!fs.existsSync(ownerApplicationDir)) {
+  fs.mkdirSync(ownerApplicationDir, { recursive: true });
+}
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, ownerApplicationDir),
+    filename: (_req, file, cb) => {
+      const safeExt = path.extname(file.originalname).toLowerCase();
+      cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${safeExt}`);
+    },
+  }),
+  fileFilter: (_req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only JPG, PNG, WEBP, and PDF files are allowed'));
+    }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+    files: 6,
+  },
+});
+
+/**
+ * Register a new salon owner with application details and documents
+ * POST /api/auth/register-owner
+ */
+router.post(
+  '/register-owner',
+  upload.fields([
+    { name: 'ownershipProof', maxCount: 1 },
+    { name: 'locationImages', maxCount: 5 },
+  ]),
+  async (req: Request, res: Response) => {
+    try {
+      const { email, password, name, salonName, description } = req.body;
+
+      if (!email || !password || !name || !salonName || !description) {
+        return res.status(400).json({ message: 'All owner registration fields are required' });
+      }
+
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+      const ownershipProofFile = files?.ownershipProof?.[0];
+      const locationImageFiles = files?.locationImages || [];
+
+      if (!ownershipProofFile) {
+        return res.status(400).json({ message: 'Ownership proof document is required' });
+      }
+
+      if (locationImageFiles.length === 0) {
+        return res.status(400).json({ message: 'At least one location image is required' });
+      }
+
+      const sanitizedEmail = sanitizeInput(email).toLowerCase();
+      const sanitizedName = sanitizeInput(name);
+      const sanitizedSalonName = sanitizeInput(salonName);
+      const sanitizedDescription = sanitizeInput(description);
+
+      if (!validateEmail(sanitizedEmail)) {
+        return res.status(400).json({ message: 'Invalid email format' });
+      }
+
+      if (!validateName(sanitizedName)) {
+        return res.status(400).json({ message: 'Name must be at least 2 characters long' });
+      }
+
+      const passwordValidation = validatePassword(password);
+      if (!passwordValidation.valid) {
+        return res.status(400).json({ message: passwordValidation.message });
+      }
+
+      const existingUser = await prisma.user.findUnique({ where: { email: sanitizedEmail } });
+      if (existingUser) {
+        return res.status(409).json({ message: 'User with this email already exists' });
+      }
+
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const ownershipProofUrl = `${baseUrl}/uploads/owner-applications/${ownershipProofFile.filename}`;
+      const locationImageUrls = locationImageFiles.map((file) => `${baseUrl}/uploads/owner-applications/${file.filename}`);
+
+      const hashedPassword = await bcrypt.hash(password, 12);
+
+      await prisma.user.create({
+        data: {
+          email: sanitizedEmail,
+          password: hashedPassword,
+          name: sanitizedName,
+          role: Role.SALON_OWNER,
+          isApproved: false,
+          salonApplicationName: sanitizedSalonName,
+          salonApplicationDescription: sanitizedDescription,
+          ownershipProofUrl,
+          locationImageUrls,
+          applicationSubmittedAt: new Date(),
+        },
+      });
+
+      return res.status(201).json({
+        message:
+          'Application submitted successfully. Admin will review your documents and you will receive approval or rejection by email.',
+        pendingApproval: true,
+      });
+    } catch (error: any) {
+      console.error('Salon owner registration error:', error);
+      if (error?.message?.includes('Only JPG, PNG, WEBP, and PDF files are allowed')) {
+        return res.status(400).json({ message: error.message });
+      }
+      res.status(500).json({ message: 'Error submitting salon owner application. Please try again.' });
+    }
+  }
+);
+
 /**
  * Register a new user
  * POST /api/auth/register
@@ -16,6 +135,12 @@ const router = Router();
 router.post('/register', async (req: Request<{}, {}, RegisterRequest>, res: Response) => {
   try {
     const { email, password, name, role = 'USER' } = req.body;
+
+    if (role === 'SALON_OWNER') {
+      return res.status(400).json({
+        message: 'Salon owners must submit the owner application form with required documents.',
+      });
+    }
 
     // Input validation
     if (!email || !password || !name) {

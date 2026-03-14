@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, MapPin, Scissors, User, AlertCircle, Loader2, RefreshCw, XCircle, CheckCircle, ChevronDown, Search, Star, Send, BadgeCheck } from 'lucide-react';
+import { Calendar, Clock, MapPin, Scissors, User, AlertCircle, Loader2, RefreshCw, XCircle, CheckCircle, ChevronDown, Search, Star, Send, BadgeCheck, Receipt, CreditCard, Wallet, Gift } from 'lucide-react';
 import { Button } from '../components/Button';
-import { appointments, reviews as reviewsApi } from '../api/client';
+import { appointments, reviews as reviewsApi, payments, loyalty } from '../api/client';
 
 interface BookingAppointment {
   id: string;
@@ -42,6 +42,14 @@ export const MyBookingsPage: React.FC = () => {
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewedBookings, setReviewedBookings] = useState<Set<string>>(new Set());
 
+  // Receipt state
+  const [receiptData, setReceiptData] = useState<any>(null);
+  const [receiptLoading, setReceiptLoading] = useState(false);
+  const [showReceipt, setShowReceipt] = useState(false);
+
+  // Loyalty status
+  const [loyaltyInfo, setLoyaltyInfo] = useState<{ points: number; tier: string; redemptionValue: number } | null>(null);
+
   const handleSubmitReview = async () => {
     if (!reviewBooking || reviewRating === 0 || !reviewComment.trim()) {
       setReviewError('Please provide a rating and comment');
@@ -68,6 +76,7 @@ export const MyBookingsPage: React.FC = () => {
 
   useEffect(() => {
     fetchBookings();
+    loyalty.getStatus().then(res => setLoyaltyInfo(res.data)).catch(() => {});
   }, []);
 
   const fetchBookings = async () => {
@@ -146,6 +155,20 @@ export const MyBookingsPage: React.FC = () => {
       alert(err.response?.data?.message || 'Failed to cancel booking.');
     } finally {
       setCancelLoading(false);
+    }
+  };
+
+  const handleViewReceipt = async (bookingId: string) => {
+    setReceiptLoading(true);
+    setShowReceipt(true);
+    try {
+      const res = await payments.getReceipt(bookingId);
+      setReceiptData(res.data);
+    } catch (err: any) {
+      console.error('Receipt error:', err);
+      setReceiptData(null);
+    } finally {
+      setReceiptLoading(false);
     }
   };
 
@@ -260,6 +283,37 @@ export const MyBookingsPage: React.FC = () => {
           <p className="text-xs text-red-600 mt-1">Cancelled</p>
         </div>
       </div>
+
+      {/* Loyalty Rewards Card */}
+      {loyaltyInfo && (
+        <div className="mb-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl p-5 text-white shadow-lg">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-white/20 rounded-full p-3">
+                <Gift className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg">GlamConnect Rewards</h3>
+                <p className="text-white/80 text-sm">{loyaltyInfo.tier} Member</p>
+              </div>
+            </div>
+            <div className="flex gap-6 text-center">
+              <div>
+                <p className="text-2xl font-bold">{loyaltyInfo.points}</p>
+                <p className="text-white/70 text-xs">Points</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">NPR {loyaltyInfo.redemptionValue}</p>
+                <p className="text-white/70 text-xs">Redeemable</p>
+              </div>
+            </div>
+          </div>
+          <p className="text-white/60 text-xs mt-3">
+            <Gift className="inline h-3 w-3 mr-1" />
+            Earn points on every completed booking. 10 points = NPR 1 discount on your next visit!
+          </p>
+        </div>
+      )}
 
       {/* Filter & Search */}
       <div className="flex flex-col sm:flex-row gap-4 mb-6">
@@ -424,6 +478,13 @@ export const MyBookingsPage: React.FC = () => {
                         >
                           <Star className="h-3.5 w-3.5 mr-1" /> Write Review
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleViewReceipt(booking.id)}
+                        >
+                          <Receipt className="h-3.5 w-3.5 mr-1" /> View Receipt
+                        </Button>
                       </div>
                     )}
                     {booking.status === 'COMPLETED' && reviewedBookings.has(booking.salon.id) && (
@@ -431,6 +492,25 @@ export const MyBookingsPage: React.FC = () => {
                         <span className="text-xs text-green-600 bg-green-50 px-3 py-1.5 rounded-lg flex items-center gap-1">
                           <BadgeCheck className="h-3.5 w-3.5" /> Review submitted
                         </span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleViewReceipt(booking.id)}
+                        >
+                          <Receipt className="h-3.5 w-3.5 mr-1" /> View Receipt
+                        </Button>
+                      </div>
+                    )}
+                    {/* View Receipt for confirmed bookings */}
+                    {booking.status === 'CONFIRMED' && (
+                      <div className="flex gap-2 pt-2 border-t border-gray-100 mt-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleViewReceipt(booking.id)}
+                        >
+                          <Receipt className="h-3.5 w-3.5 mr-1" /> View Receipt
+                        </Button>
                       </div>
                     )}
                   </div>
@@ -683,6 +763,177 @@ export const MyBookingsPage: React.FC = () => {
                 )}
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Receipt Modal */}
+      {showReceipt && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto shadow-xl">
+            <div className="p-6 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-bold text-gray-900 flex items-center">
+                  <Receipt className="h-5 w-5 mr-2 text-pink-500" />
+                  Digital Receipt
+                </h3>
+                <button
+                  onClick={() => { setShowReceipt(false); setReceiptData(null); }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <XCircle className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6">
+              {receiptLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-pink-500" />
+                  <span className="ml-2 text-gray-500">Loading receipt...</span>
+                </div>
+              ) : receiptData ? (
+                <div className="space-y-4">
+                  {/* Receipt Header */}
+                  <div className="text-center border-b border-dashed border-gray-300 pb-4">
+                    <h4 className="text-xl font-bold text-pink-600">GlamConnect</h4>
+                    <p className="text-xs text-gray-500 mt-1">Digital Invoice / Receipt</p>
+                    <p className="text-xs text-gray-400 mt-1">Receipt #{receiptData.receiptNumber}</p>
+                  </div>
+
+                  {/* Salon Info */}
+                  <div className="bg-gray-50 rounded-lg p-3 text-sm">
+                    <p className="font-bold text-gray-900">{receiptData.salon.name}</p>
+                    <p className="text-gray-500 text-xs">{receiptData.salon.address}</p>
+                  </div>
+
+                  {/* Customer Info */}
+                  <div className="text-sm space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Customer</span>
+                      <span className="font-medium">{receiptData.customer.name}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Email</span>
+                      <span className="text-xs">{receiptData.customer.email}</span>
+                    </div>
+                  </div>
+
+                  {/* Service Details */}
+                  <div className="border-t border-gray-200 pt-3 text-sm space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Service</span>
+                      <span className="font-medium">{receiptData.service.name}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Category</span>
+                      <span>{receiptData.service.category}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Duration</span>
+                      <span>{receiptData.service.duration} min</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Stylist</span>
+                      <span>{receiptData.stylist.name}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Appointment Date</span>
+                      <span>{new Date(receiptData.appointmentDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Booking Status</span>
+                      <span className={`font-medium ${receiptData.status === 'COMPLETED' ? 'text-green-600' : receiptData.status === 'CONFIRMED' ? 'text-blue-600' : 'text-gray-600'}`}>
+                        {receiptData.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Payment Breakdown */}
+                  <div className="border-t border-gray-200 pt-3 text-sm space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Service Price</span>
+                      <span>NPR {receiptData.payment.subtotal}</span>
+                    </div>
+                    {receiptData.payment.loyaltyDiscount > 0 && (
+                      <div className="flex justify-between text-purple-600">
+                        <span>Loyalty Points ({receiptData.payment.loyaltyPointsUsed} pts)</span>
+                        <span>-NPR {receiptData.payment.loyaltyDiscount}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between pt-2 border-t border-gray-300 font-bold text-base">
+                      <span>Total Paid</span>
+                      <span className="text-pink-600">NPR {receiptData.payment.totalPaid}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-400">Payment Method</span>
+                      <span className={`flex items-center gap-1 ${receiptData.payment.method === 'ONLINE' ? 'text-blue-600' : 'text-yellow-600'}`}>
+                        {receiptData.payment.method === 'ONLINE' ? (
+                          <><CreditCard className="h-3 w-3" /> Online Payment</>
+                        ) : (
+                          <><Wallet className="h-3 w-3" /> Pay at Salon</>
+                        )}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-400">Payment Status</span>
+                      <span className={`font-medium ${receiptData.payment.status === 'PAID' ? 'text-green-600' : 'text-amber-600'}`}>
+                        {receiptData.payment.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Invoice Date */}
+                  <div className="border-t border-dashed border-gray-300 pt-3 text-center">
+                    <p className="text-xs text-gray-400">
+                      Invoice Date: {new Date(receiptData.invoiceDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                    </p>
+                    <p className="text-xs text-gray-300 mt-1">Thank you for choosing GlamConnect!</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  <AlertCircle className="h-8 w-8 mx-auto mb-2 text-gray-300" />
+                  <p>Unable to load receipt</p>
+                </div>
+              )}
+            </div>
+
+            {receiptData && (
+              <div className="p-4 border-t border-gray-100 bg-gray-50 text-center">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    // Print receipt
+                    const printContent = document.getElementById('receipt-print-area');
+                    if (printContent) {
+                      const w = window.open('', '', 'width=400,height=600');
+                      w?.document.write(`<html><head><title>Receipt ${receiptData.receiptNumber}</title><style>body{font-family:sans-serif;padding:20px;font-size:14px}h4{text-align:center;color:#ec4899}td{padding:4px 8px}.right{text-align:right}.total{font-weight:bold;font-size:16px;border-top:2px solid #333}</style></head><body>`);
+                      w?.document.write(`<h4>GlamConnect Receipt</h4>`);
+                      w?.document.write(`<p style="text-align:center;color:#888">${receiptData.receiptNumber}</p>`);
+                      w?.document.write(`<hr><p><strong>${receiptData.salon.name}</strong><br>${receiptData.salon.address}</p>`);
+                      w?.document.write(`<p>Customer: ${receiptData.customer.name}<br>Email: ${receiptData.customer.email}</p><hr>`);
+                      w?.document.write(`<table width="100%"><tr><td>Service</td><td class="right">${receiptData.service.name}</td></tr>`);
+                      w?.document.write(`<tr><td>Duration</td><td class="right">${receiptData.service.duration} min</td></tr>`);
+                      w?.document.write(`<tr><td>Stylist</td><td class="right">${receiptData.stylist.name}</td></tr>`);
+                      w?.document.write(`<tr><td>Date</td><td class="right">${new Date(receiptData.appointmentDate).toLocaleDateString()}</td></tr><tr><td colspan="2"><hr></td></tr>`);
+                      w?.document.write(`<tr><td>Service Price</td><td class="right">NPR ${receiptData.payment.subtotal}</td></tr>`);
+                      if (receiptData.payment.loyaltyDiscount > 0) {
+                        w?.document.write(`<tr style="color:purple"><td>Points Discount</td><td class="right">-NPR ${receiptData.payment.loyaltyDiscount}</td></tr>`);
+                      }
+                      w?.document.write(`<tr class="total"><td>Total</td><td class="right">NPR ${receiptData.payment.totalPaid}</td></tr></table>`);
+                      w?.document.write(`<p>Payment: ${receiptData.payment.method === 'ONLINE' ? 'Online' : 'Pay at Salon'} (${receiptData.payment.status})</p>`);
+                      w?.document.write(`<hr><p style="text-align:center;color:#888;font-size:12px">Thank you for choosing GlamConnect!</p></body></html>`);
+                      w?.document.close();
+                      w?.print();
+                    }
+                  }}
+                >
+                  <Receipt className="h-3.5 w-3.5 mr-1" /> Print Receipt
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       )}

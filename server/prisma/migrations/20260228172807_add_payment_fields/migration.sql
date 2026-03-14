@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "Appointment" ADD COLUMN     "loyaltyDiscount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+ADD COLUMN     "loyaltyPointsUsed" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "paymentIntentId" TEXT,
+ADD COLUMN     "paymentMethod" TEXT NOT NULL DEFAULT 'PAY_AT_SALON',
+ADD COLUMN     "paymentStatus" TEXT NOT NULL DEFAULT 'PENDING';

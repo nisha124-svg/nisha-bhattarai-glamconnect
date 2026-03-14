@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Star, MapPin, Clock, Calendar, CheckCircle, Loader2, AlertCircle, Phone, Mail, MessageCircle, Send, BadgeCheck } from 'lucide-react';
+import { ArrowLeft, Star, MapPin, Clock, Calendar, CheckCircle, Loader2, AlertCircle, Phone, Mail, MessageCircle, Send, BadgeCheck, CreditCard, Wallet, Gift, Receipt } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Salon, Service, Stylist } from '../types';
 import { SalonMap } from '../components/GoogleMap';
 import { SalonChat } from '../components/SalonChat';
 
-import { appointments, salons as salonApi, reviews as reviewsApi } from '../api/client';
+import { appointments, salons as salonApi, reviews as reviewsApi, payments, loyalty } from '../api/client';
 
 interface SalonProfilePageProps {
   salon: Salon;
@@ -35,6 +35,18 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
   const [promoCode, setPromoCode] = useState('');
   const [discount, setDiscount] = useState(0);
 
+  // Payment & Loyalty State
+  const [paymentMethod, setPaymentMethod] = useState<'ONLINE' | 'PAY_AT_SALON'>('PAY_AT_SALON');
+  const [loyaltyStatus, setLoyaltyStatus] = useState<{ points: number; tier: string; redemptionValue: number } | null>(null);
+  const [redeemPoints, setRedeemPoints] = useState(0);
+  const [loyaltyDiscount, setLoyaltyDiscount] = useState(0);
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [cardholderName, setCardholderName] = useState('');
+  const [cardNumber, setCardNumber] = useState('');
+  const [expiryDate, setExpiryDate] = useState('');
+  const [cvv, setCvv] = useState('');
+
   // Check if user is logged in
   const isLoggedIn = !!localStorage.getItem('token');
 
@@ -50,19 +62,26 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewSuccess, setReviewSuccess] = useState(false);
   const [canReviewData, setCanReviewData] = useState<{ canReview: boolean; hasCompletedBooking: boolean } | null>(null);
-  const [salonReviews, setSalonReviews] = useState<any[]>(salon.reviews || []);
+  const [salonReviews, setSalonReviews] = useState<any[]>([]);
+  const [reviewsRestricted, setReviewsRestricted] = useState(false);
 
-  // Check review eligibility on mount
+  // Check review eligibility and fetch reviews on mount
   useEffect(() => {
     if (isLoggedIn) {
       reviewsApi.canReview(salon.id).then(res => {
         setCanReviewData(res.data);
       }).catch(() => {});
-      // Fetch full reviews with verified status
-      reviewsApi.getBySalon(salon.id).then(res => {
-        setSalonReviews(res.data);
-      }).catch(() => {});
     }
+    // Fetch reviews (API returns restricted response for non-admin/non-owner)
+    reviewsApi.getBySalon(salon.id).then(res => {
+      if (res.data?.restricted) {
+        setReviewsRestricted(true);
+        setSalonReviews([]);
+      } else if (Array.isArray(res.data)) {
+        setReviewsRestricted(false);
+        setSalonReviews(res.data);
+      }
+    }).catch(() => {});
   }, [salon.id, isLoggedIn]);
 
   const handleSubmitReview = async () => {
@@ -114,6 +133,44 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
     return slots;
   };
 
+  const isPastTimeSlot = (dateStr: string, timeLabel: string): boolean => {
+    const selectedDay = new Date(`${dateStr}T00:00:00`);
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+    // Safety check: if somehow a past date is selected, mark every slot unavailable.
+    if (selectedDay < todayStart) return true;
+    if (selectedDay > todayStart) return false;
+
+    const timePart = timeLabel.trim();
+    const twelveHourMatch = timePart.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    const twentyFourHourMatch = timePart.match(/^(\d{1,2}):(\d{2})$/);
+
+    let hours = 0;
+    let minutes = 0;
+
+    if (twelveHourMatch) {
+      hours = parseInt(twelveHourMatch[1], 10);
+      minutes = parseInt(twelveHourMatch[2], 10);
+      const meridiem = twelveHourMatch[3].toUpperCase();
+      if (hours === 12) {
+        hours = meridiem === 'AM' ? 0 : 12;
+      } else if (meridiem === 'PM') {
+        hours += 12;
+      }
+    } else if (twentyFourHourMatch) {
+      hours = parseInt(twentyFourHourMatch[1], 10);
+      minutes = parseInt(twentyFourHourMatch[2], 10);
+    } else {
+      return false;
+    }
+
+    const slotDateTime = new Date(selectedDay);
+    slotDateTime.setHours(hours, minutes, 0, 0);
+
+    return slotDateTime <= today;
+  };
+
   // Fetch available slots when date or stylist changes
   useEffect(() => {
     if (selectedDate && selectedService) {
@@ -134,17 +191,25 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
         // Map server slots to our TimeSlot format
         const mappedSlots: TimeSlot[] = serverSlots.map((slot: any) => ({
           time: slot.display,
-          available: slot.available
+          available: slot.available && !isPastTimeSlot(selectedDate, slot.display)
         }));
         setAvailableSlots(mappedSlots);
       } else {
         // Fallback to generated slots if no stylist available
-        setAvailableSlots(generateTimeSlots(selectedService.duration));
+        const generatedSlots = generateTimeSlots(selectedService.duration).map((slot) => ({
+          ...slot,
+          available: slot.available && !isPastTimeSlot(selectedDate, slot.time),
+        }));
+        setAvailableSlots(generatedSlots);
       }
     } catch (error) {
       console.error('Error fetching slots:', error);
       // Fallback to client-generated slots
-      setAvailableSlots(generateTimeSlots(selectedService.duration));
+      const generatedSlots = generateTimeSlots(selectedService.duration).map((slot) => ({
+        ...slot,
+        available: slot.available && !isPastTimeSlot(selectedDate, slot.time),
+      }));
+      setAvailableSlots(generatedSlots);
     } finally {
       setLoadingSlots(false);
     }
@@ -161,6 +226,19 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
     setBookingError(null);
     setPromoCode('');
     setDiscount(0);
+    setPaymentMethod('PAY_AT_SALON');
+    setRedeemPoints(0);
+    setLoyaltyDiscount(0);
+    setPaymentProcessing(false);
+    setPaymentSuccess(false);
+    setCardholderName('');
+    setCardNumber('');
+    setExpiryDate('');
+    setCvv('');
+    // Fetch loyalty status
+    loyalty.getStatus().then(res => {
+      setLoyaltyStatus(res.data);
+    }).catch(() => setLoyaltyStatus(null));
   };
 
   const handleBookingSubmit = async () => {
@@ -173,17 +251,43 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
     setBookingError(null);
 
     try {
+      const finalTotal = calculateTotal();
+      let paymentIntentId: string | null = null;
+
+      // If paying online, create and confirm a payment intent
+      if (paymentMethod === 'ONLINE') {
+        setPaymentProcessing(true);
+        const intentRes = await payments.createIntent({ amount: finalTotal });
+        paymentIntentId = intentRes.data.paymentIntentId;
+
+        // Confirm payment (in demo mode this succeeds immediately)
+        await payments.confirm({ paymentIntentId });
+        setPaymentSuccess(true);
+        setPaymentProcessing(false);
+      }
+
+      // If loyalty points are being redeemed, call the redeem API
+      if (redeemPoints > 0) {
+        await loyalty.redeem({ points: redeemPoints });
+      }
+
+      // Create the appointment with payment details
       await appointments.create({
         salonId: salon.id,
         serviceId: selectedService.id,
         stylistId: selectedStylist?.id || salon.stylists[0]?.id,
         date: `${selectedDate}T${convertTo24Hour(selectedTime)}`,
-        price: selectedService.price - discount
+        price: finalTotal,
+        paymentMethod,
+        paymentIntentId,
+        loyaltyPointsUsed: redeemPoints,
+        loyaltyDiscount,
       });
       setShowBookingModal(false);
       onBookSuccess();
     } catch (error: any) {
       console.error('Booking failed:', error);
+      setPaymentProcessing(false);
       setBookingError(error.response?.data?.message || 'Failed to book appointment. Please try again.');
     } finally {
       setBookingLoading(false);
@@ -216,7 +320,29 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
 
   const calculateTotal = () => {
     if (!selectedService) return 0;
-    return Math.max(0, selectedService.price - discount);
+    return Math.max(0, selectedService.price - discount - loyaltyDiscount);
+  };
+
+  const normalizeCardNumber = (value: string) => {
+    const digits = value.replace(/\D/g, '').slice(0, 16);
+    return digits.replace(/(.{4})/g, '$1 ').trim();
+  };
+
+  const normalizeExpiryDate = (value: string) => {
+    const digits = value.replace(/\D/g, '').slice(0, 4);
+    if (digits.length <= 2) return digits;
+    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  };
+
+  const isPaymentInfoComplete = () => {
+    if (paymentMethod !== 'ONLINE') return true;
+    const rawCardNumber = cardNumber.replace(/\s/g, '');
+    return (
+      cardholderName.trim().length >= 2 &&
+      /^\d{16}$/.test(rawCardNumber) &&
+      /^(0[1-9]|1[0-2])\/\d{2}$/.test(expiryDate) &&
+      /^\d{3,4}$/.test(cvv)
+    );
   };
 
   return (
@@ -418,7 +544,21 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
                 )}
 
                 {/* Reviews List */}
-                {salonReviews.length > 0 ? (
+                {reviewsRestricted ? (
+                  <div className="bg-gray-50 rounded-xl p-8 text-center">
+                    <div className="flex justify-center mb-3">
+                      {[...Array(5)].map((_, i) => (
+                        <Star key={i} className={`h-6 w-6 ${i < Math.round(salon.rating) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
+                      ))}
+                    </div>
+                    <p className="text-2xl font-bold text-gray-900 mb-1">{salon.rating} / 5</p>
+                    <p className="text-gray-500 text-sm mb-4">Based on {salon.reviewCount} review{salon.reviewCount !== 1 ? 's' : ''}</p>
+                    <div className="bg-white border border-gray-200 rounded-lg p-4 text-sm text-gray-500">
+                      <AlertCircle className="h-4 w-4 inline mr-1 text-gray-400" />
+                      Individual reviews are only visible to the salon owner and system admin.
+                    </div>
+                  </div>
+                ) : salonReviews.length > 0 ? (
                   salonReviews.map((review: any) => (
                     <div key={review.id} className="bg-gray-50 rounded-xl p-6">
                       <div className="flex justify-between items-start mb-2">
@@ -563,7 +703,7 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
       {/* Booking Modal Overlay */}
       {showBookingModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-pink-50">
               <h3 className="font-bold text-xl text-gray-800">Book Appointment</h3>
               <button onClick={() => setShowBookingModal(false)} className="text-gray-400 hover:text-gray-600">
@@ -572,7 +712,7 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
               </button>
             </div>
 
-            <div className="p-6 md:p-8">
+            <div className="p-6 md:p-8 overflow-y-auto flex-1">
               {/* Progress Steps */}
               <div className="flex mb-8 justify-between relative">
                 <div className="absolute top-1/2 left-0 w-full h-0.5 bg-gray-200 -z-10 transform -translate-y-1/2"></div>
@@ -739,23 +879,185 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
                         </Button>
                       </div>
                       {discount > 0 && (
-                        <p className="text-green-600 text-xs mt-1">✓ Code applied! You save ${discount}</p>
+                        <p className="text-green-600 text-xs mt-1">✓ Code applied! You save NPR {discount}</p>
                       )}
                     </div>
 
+                    {/* Loyalty Points Redemption */}
+                    {loyaltyStatus && loyaltyStatus.points > 0 && (
+                      <div className="pt-2 border-t border-gray-200">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          <Gift className="inline h-4 w-4 mr-1 text-purple-500" />
+                          Redeem Loyalty Points
+                        </label>
+                        <div className="bg-purple-50 rounded-lg p-3 mb-2">
+                          <div className="flex justify-between text-sm mb-1">
+                            <span className="text-purple-700">Available Points</span>
+                            <span className="font-bold text-purple-700">{loyaltyStatus.points} pts</span>
+                          </div>
+                          <div className="flex justify-between text-xs text-purple-500">
+                            <span>Tier: {loyaltyStatus.tier}</span>
+                            <span>Worth up to NPR {loyaltyStatus.redemptionValue}</span>
+                          </div>
+                        </div>
+                        <div className="flex gap-2 items-center">
+                          <input
+                            type="number"
+                            min={0}
+                            max={Math.min(loyaltyStatus.points, (selectedService?.price || 0) * 10)}
+                            step={10}
+                            placeholder="Points to redeem"
+                            value={redeemPoints || ''}
+                            onChange={(e) => {
+                              const pts = Math.min(
+                                parseInt(e.target.value) || 0,
+                                loyaltyStatus.points,
+                                (selectedService?.price || 0) * 10 // Can't redeem more than total price
+                              );
+                              setRedeemPoints(Math.max(0, pts));
+                              setLoyaltyDiscount(Math.floor(pts / 10)); // 10 pts = NPR 1
+                            }}
+                            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-purple-500 focus:border-purple-500"
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const maxPts = Math.min(
+                                loyaltyStatus.points,
+                                (selectedService?.price || 0) * 10
+                              );
+                              setRedeemPoints(maxPts);
+                              setLoyaltyDiscount(Math.floor(maxPts / 10));
+                            }}
+                          >
+                            Use All
+                          </Button>
+                        </div>
+                        {loyaltyDiscount > 0 && (
+                          <p className="text-purple-600 text-xs mt-1">✓ {redeemPoints} points = NPR {loyaltyDiscount} discount</p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Payment Method Selection */}
+                    <div className="pt-3 border-t border-gray-200">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <CreditCard className="inline h-4 w-4 mr-1" />
+                        Payment Method
+                      </label>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          onClick={() => setPaymentMethod('ONLINE')}
+                          className={`flex items-center justify-center gap-2 p-3 rounded-lg border-2 transition text-sm font-medium ${
+                            paymentMethod === 'ONLINE'
+                              ? 'border-pink-500 bg-pink-50 text-pink-700'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-pink-300'
+                          }`}
+                        >
+                          <CreditCard className="h-4 w-4" />
+                          Pay Online
+                        </button>
+                        <button
+                          onClick={() => setPaymentMethod('PAY_AT_SALON')}
+                          className={`flex items-center justify-center gap-2 p-3 rounded-lg border-2 transition text-sm font-medium ${
+                            paymentMethod === 'PAY_AT_SALON'
+                              ? 'border-pink-500 bg-pink-50 text-pink-700'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-pink-300'
+                          }`}
+                        >
+                          <Wallet className="h-4 w-4" />
+                          Pay at Salon
+                        </button>
+                      </div>
+                      {paymentMethod === 'ONLINE' && (
+                        <div className="mt-3 space-y-3">
+                          <div className="bg-blue-50 rounded-lg p-3 text-xs text-blue-700">
+                            <CreditCard className="inline h-3 w-3 mr-1" />
+                            Secure online payment via Stripe. Your card will be charged NPR {calculateTotal()}.
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="sm:col-span-2">
+                              <label className="block text-xs font-medium text-gray-600 mb-1">Cardholder Name</label>
+                              <input
+                                type="text"
+                                placeholder="Name on card"
+                                value={cardholderName}
+                                onChange={(e) => setCardholderName(e.target.value)}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-pink-500 focus:border-pink-500"
+                              />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <label className="block text-xs font-medium text-gray-600 mb-1">Card Number</label>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                placeholder="1234 5678 9012 3456"
+                                value={cardNumber}
+                                onChange={(e) => setCardNumber(normalizeCardNumber(e.target.value))}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-pink-500 focus:border-pink-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-gray-600 mb-1">Expiry (MM/YY)</label>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                placeholder="MM/YY"
+                                value={expiryDate}
+                                onChange={(e) => setExpiryDate(normalizeExpiryDate(e.target.value))}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-pink-500 focus:border-pink-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-gray-600 mb-1">CVV</label>
+                              <input
+                                type="password"
+                                inputMode="numeric"
+                                placeholder="123"
+                                value={cvv}
+                                onChange={(e) => setCvv(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-pink-500 focus:border-pink-500"
+                              />
+                            </div>
+                          </div>
+                          {!isPaymentInfoComplete() && (
+                            <p className="text-xs text-amber-600">Please enter valid card details to continue with online payment.</p>
+                          )}
+                        </div>
+                      )}
+                      {paymentMethod === 'PAY_AT_SALON' && (
+                        <div className="mt-3 bg-yellow-50 rounded-lg p-3 text-xs text-yellow-700">
+                          <Wallet className="inline h-3 w-3 mr-1" />
+                          Pay in cash or card when you visit the salon. No upfront charge.
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Price Breakdown */}
                     <div className="flex justify-between pt-4 border-t border-gray-300">
                       <span className="text-gray-500">Subtotal</span>
-                      <span className="text-gray-700">${selectedService?.price}</span>
+                      <span className="text-gray-700">NPR {selectedService?.price}</span>
                     </div>
                     {discount > 0 && (
                       <div className="flex justify-between text-green-600">
-                        <span>Discount</span>
-                        <span>-${discount}</span>
+                        <span>Promo Discount</span>
+                        <span>-NPR {discount}</span>
+                      </div>
+                    )}
+                    {loyaltyDiscount > 0 && (
+                      <div className="flex justify-between text-purple-600">
+                        <span>Points Discount ({redeemPoints} pts)</span>
+                        <span>-NPR {loyaltyDiscount}</span>
                       </div>
                     )}
                     <div className="flex justify-between pt-2 border-t border-gray-300">
                       <span className="font-bold text-gray-900 text-lg">Total</span>
-                      <span className="font-bold text-pink-600 text-lg">${calculateTotal()}</span>
+                      <span className="font-bold text-pink-600 text-lg">NPR {calculateTotal()}</span>
+                    </div>
+                    <div className="flex items-center text-xs text-gray-400 mt-1">
+                      <Receipt className="h-3 w-3 mr-1" />
+                      A digital receipt will be sent after booking confirmation.
                     </div>
                   </div>
                 </div>
@@ -772,19 +1074,27 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
               <Button
                 disabled={
                   (bookingStep === 2 && (!selectedDate || !selectedTime)) ||
-                  bookingLoading
+                  (bookingStep === 3 && paymentMethod === 'ONLINE' && !isPaymentInfoComplete()) ||
+                  bookingLoading || paymentProcessing
                 }
                 onClick={() => {
                   if (bookingStep < 3) setBookingStep(bookingStep + 1);
                   else handleBookingSubmit();
                 }}
               >
-                {bookingLoading ? (
+                {bookingLoading || paymentProcessing ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Processing...
+                    {paymentProcessing ? 'Processing Payment...' : 'Booking...'}
                   </>
-                ) : bookingStep === 3 ? 'Confirm Booking' : 'Next Step'}
+                ) : bookingStep === 3 ? (
+                  paymentMethod === 'ONLINE' ? (
+                    <>
+                      <CreditCard className="h-4 w-4 mr-2" />
+                      Pay & Confirm (NPR {calculateTotal()})
+                    </>
+                  ) : 'Confirm Booking'
+                ) : 'Next Step'}
               </Button>
             </div>
           </div>

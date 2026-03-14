@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Mail, Lock, User, Eye, EyeOff, Check, Facebook, Chrome, Clock } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Mail, Lock, User, Eye, EyeOff, Check, Facebook, Chrome, Clock, Building2, FileText, Image } from 'lucide-react';
 import { Button } from '../components/Button';
 import { PageView } from '../types';
 
@@ -47,6 +47,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [isSalonOwner, setIsSalonOwner] = useState(false);
+  const [salonName, setSalonName] = useState('');
+  const [salonDescription, setSalonDescription] = useState('');
+  const [ownershipProof, setOwnershipProof] = useState<File | null>(null);
+  const [locationImages, setLocationImages] = useState<File[]>([]);
+  const ownershipProofInputRef = useRef<HTMLInputElement | null>(null);
+  const locationImagesInputRef = useRef<HTMLInputElement | null>(null);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [pendingApprovalMessage, setPendingApprovalMessage] = useState('');
@@ -99,6 +105,30 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
         setError('Name must be at least 2 characters long');
         return;
       }
+
+      if (isSalonOwner) {
+        const selectedOwnershipProof = ownershipProof || ownershipProofInputRef.current?.files?.[0] || null;
+        const selectedLocationImages =
+          locationImages.length > 0
+            ? locationImages
+            : Array.from(locationImagesInputRef.current?.files || []);
+
+        if (!salonName.trim() || !salonDescription.trim()) {
+          setError('Salon name and description are required for owner application');
+          return;
+        }
+        if (!selectedOwnershipProof) {
+          setError('Ownership proof document is required');
+          return;
+        }
+        if (selectedLocationImages.length === 0) {
+          setError('At least one salon location image is required');
+          return;
+        }
+
+        setOwnershipProof(selectedOwnershipProof);
+        setLocationImages(selectedLocationImages);
+      }
     }
 
     setIsLoading(true);
@@ -111,12 +141,36 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
         localStorage.setItem('user', JSON.stringify(response.data.user));
         redirectByRole(response.data.user);
       } else {
-        response = await auth.register({
-          email,
-          password,
-          name,
-          role: isSalonOwner ? 'SALON_OWNER' : 'USER'
-        });
+        if (isSalonOwner) {
+          const selectedOwnershipProof = ownershipProof || ownershipProofInputRef.current?.files?.[0] || null;
+          const selectedLocationImages =
+            locationImages.length > 0
+              ? locationImages
+              : Array.from(locationImagesInputRef.current?.files || []);
+
+          if (!selectedOwnershipProof || selectedLocationImages.length === 0) {
+            setError('Please select ownership proof and at least one location image.');
+            setIsLoading(false);
+            return;
+          }
+
+          const formData = new FormData();
+          formData.append('email', email);
+          formData.append('password', password);
+          formData.append('name', name);
+          formData.append('salonName', salonName);
+          formData.append('description', salonDescription);
+          formData.append('ownershipProof', selectedOwnershipProof);
+          selectedLocationImages.forEach((file) => formData.append('locationImages', file));
+          response = await auth.registerSalonOwner(formData);
+        } else {
+          response = await auth.register({
+            email,
+            password,
+            name,
+            role: 'USER'
+          });
+        }
         
         // Check if this is a pending approval response
         if (response.data.pendingApproval) {
@@ -150,6 +204,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
     setPassword('');
     setName('');
     setIsSalonOwner(false);
+    setSalonName('');
+    setSalonDescription('');
+    setOwnershipProof(null);
+    setLocationImages([]);
   };
 
   // Google OAuth handler
@@ -277,6 +335,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
               setPassword('');
               setName('');
               setIsSalonOwner(false);
+              setSalonName('');
+              setSalonDescription('');
+              setOwnershipProof(null);
+              setLocationImages([]);
             }}
             className="w-full py-3 px-4 bg-pink-600 text-white rounded-xl font-medium hover:bg-pink-700 transition"
           >
@@ -431,10 +493,81 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
                     type="checkbox"
                     className="rounded text-pink-500 focus:ring-pink-500 border-gray-300 mr-2"
                     checked={isSalonOwner}
-                    onChange={(e) => setIsSalonOwner(e.target.checked)}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setIsSalonOwner(checked);
+                      if (!checked) {
+                        setSalonName('');
+                        setSalonDescription('');
+                        setOwnershipProof(null);
+                        setLocationImages([]);
+                      }
+                    }}
                   />
                   <span>I am a Salon Owner/Professional</span>
                 </label>
+              )}
+
+              {!isLogin && isSalonOwner && (
+                <div className="space-y-4 bg-white border border-pink-100 rounded-xl p-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <Building2 className="inline h-4 w-4 mr-1" /> Salon Name
+                    </label>
+                    <input
+                      type="text"
+                      value={salonName}
+                      onChange={(e) => setSalonName(e.target.value)}
+                      placeholder="Enter your salon name"
+                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500 transition bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <FileText className="inline h-4 w-4 mr-1" /> Salon Description
+                    </label>
+                    <textarea
+                      value={salonDescription}
+                      onChange={(e) => setSalonDescription(e.target.value)}
+                      placeholder="Briefly describe your salon and services"
+                      rows={3}
+                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500 transition bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Ownership Proof (PDF/Image)</label>
+                    <input
+                      ref={ownershipProofInputRef}
+                      type="file"
+                      accept=".pdf,image/*"
+                      onChange={(e) => {
+                        setOwnershipProof(e.target.files?.[0] || null);
+                        setError('');
+                      }}
+                      className="w-full text-sm text-gray-600 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-pink-100 file:text-pink-700 hover:file:bg-pink-200"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <Image className="inline h-4 w-4 mr-1" /> Location Images
+                    </label>
+                    <input
+                      ref={locationImagesInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={(e) => {
+                        setLocationImages(Array.from(e.target.files || []));
+                        setError('');
+                      }}
+                      className="w-full text-sm text-gray-600 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-pink-100 file:text-pink-700 hover:file:bg-pink-200"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Upload one or more images of your salon location.</p>
+                  </div>
+                </div>
               )}
 
               <Button

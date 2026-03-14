@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../config/database';
 import { authMiddleware, adminOnly } from '../middleware/auth.middleware';
+import { sendOwnerApplicationDecision } from '../services/email.service';
 
 const router = Router();
 
@@ -355,6 +356,11 @@ router.get('/pending-owners', authMiddleware, adminOnly, async (req: Request, re
         name: true,
         email: true,
         phone: true,
+        salonApplicationName: true,
+        salonApplicationDescription: true,
+        ownershipProofUrl: true,
+        locationImageUrls: true,
+        applicationSubmittedAt: true,
         createdAt: true
       },
       orderBy: { createdAt: 'desc' }
@@ -371,11 +377,22 @@ router.get('/pending-owners', authMiddleware, adminOnly, async (req: Request, re
 router.put('/users/:id/approve', authMiddleware, adminOnly, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    const { reason } = req.body;
 
     const user = await prisma.user.update({
       where: { id },
-      data: { isApproved: true },
+      data: {
+        isApproved: true,
+        applicationReviewedAt: new Date(),
+        applicationReviewNote: reason || 'Approved by admin',
+      },
       select: { id: true, name: true, email: true, role: true, isApproved: true }
+    });
+
+    await sendOwnerApplicationDecision(user.email, {
+      ownerName: user.name,
+      approved: true,
+      reason,
     });
 
     res.json({ message: `Salon owner "${user.name}" has been approved. They can now log in and set up their salon.`, user });
@@ -390,15 +407,27 @@ router.put('/users/:id/reject', authMiddleware, adminOnly, async (req: Request, 
   try {
     const { id } = req.params;
     const { reason } = req.body;
+    const rejectionReason = reason || 'Your submitted documents could not be verified.';
 
     // Demote back to regular USER and mark approved (so they can use the platform as a customer)
     const user = await prisma.user.update({
       where: { id },
-      data: { role: 'USER', isApproved: true },
+      data: {
+        role: 'USER',
+        isApproved: true,
+        applicationReviewedAt: new Date(),
+        applicationReviewNote: rejectionReason,
+      },
       select: { id: true, name: true, email: true, role: true, isApproved: true }
     });
 
-    res.json({ message: `Salon owner request from "${user.name}" has been rejected. Account converted to regular user.`, user, reason });
+    await sendOwnerApplicationDecision(user.email, {
+      ownerName: user.name,
+      approved: false,
+      reason: rejectionReason,
+    });
+
+    res.json({ message: `Salon owner request from "${user.name}" has been rejected. Account converted to regular user.`, user, reason: rejectionReason });
   } catch (error) {
     console.error('Error rejecting salon owner:', error);
     res.status(500).json({ message: 'Error rejecting salon owner' });

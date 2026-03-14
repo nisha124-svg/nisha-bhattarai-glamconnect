@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import path from 'path';
 import authRoutes from './routes/auth.routes';
 import salonRoutes from './routes/salon.routes';
 import appointmentRoutes from './routes/appointment.routes';
@@ -31,6 +32,7 @@ const io = new Server(httpServer, {
 
 app.use(cors());
 app.use(express.json());
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 app.set('io', io);
 

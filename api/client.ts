@@ -67,6 +67,8 @@ interface FacebookAuthData {
 export const auth = {
   login: (credentials: LoginCredentials) => api.post('/auth/login', credentials),
   register: (data: RegisterData) => api.post('/auth/register', data),
+  registerSalonOwner: (formData: FormData) =>
+    axios.post(`${API_URL}/auth/register-owner`, formData),
   googleLogin: (data: GoogleAuthData) => api.post('/auth/google', data),
   facebookLogin: (data: FacebookAuthData) => api.post('/auth/facebook', data),
   getProfile: () => api.get('/auth/me'),
@@ -194,6 +196,7 @@ export const payments = {
   getHistory: () => api.get('/payments/history'),
   refund: (data: { paymentIntentId?: string; appointmentId?: string; reason?: string }) => 
     api.post('/payments/refund', data),
+  getReceipt: (appointmentId: string) => api.get(`/payments/receipt/${appointmentId}`),
 };
 
 // Loyalty Program API

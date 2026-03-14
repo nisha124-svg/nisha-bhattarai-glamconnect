@@ -204,7 +204,8 @@ export const AdminPage: React.FC = () => {
   // Handle reject salon owner
   const handleRejectOwner = async (userId: string) => {
     try {
-      await admin.rejectOwner(userId, 'Rejected by admin');
+      const reason = window.prompt('Enter rejection reason to email the applicant:', 'Submitted documents could not be verified.') || 'Submitted documents could not be verified.';
+      await admin.rejectOwner(userId, reason);
       fetchPendingOwners();
       fetchStats();
       fetchUsers();
@@ -438,13 +439,31 @@ export const AdminPage: React.FC = () => {
                 </div>
                 <div className="space-y-3">
                   {pendingOwners.slice(0, 5).map((owner: any) => (
-                    <div key={owner.id} className="flex items-center justify-between bg-white rounded-lg p-3 border border-orange-100">
-                      <div>
+                    <div key={owner.id} className="bg-white rounded-lg p-3 border border-orange-100">
+                      <div className="mb-3">
                         <p className="font-medium text-gray-900">{owner.name}</p>
                         <p className="text-sm text-gray-500">{owner.email}</p>
                         <p className="text-xs text-gray-400">Registered {new Date(owner.createdAt).toLocaleDateString()}</p>
+                        {owner.salonApplicationName && (
+                          <p className="text-sm text-gray-700 mt-2"><span className="font-semibold">Salon:</span> {owner.salonApplicationName}</p>
+                        )}
+                        {owner.salonApplicationDescription && (
+                          <p className="text-xs text-gray-600 mt-1 line-clamp-2">{owner.salonApplicationDescription}</p>
+                        )}
+                        <div className="flex flex-wrap gap-3 mt-2 text-xs">
+                          {owner.ownershipProofUrl && (
+                            <a href={owner.ownershipProofUrl} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                              View Ownership Proof
+                            </a>
+                          )}
+                          {(owner.locationImageUrls || []).slice(0, 3).map((img: string, idx: number) => (
+                            <a key={idx} href={img} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                              Location Image {idx + 1}
+                            </a>
+                          ))}
+                        </div>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 justify-end">
                         <Button size="sm" onClick={() => handleApproveOwner(owner.id)} className="bg-green-600 hover:bg-green-700 text-white">
                           <CheckCircle className="h-4 w-4 mr-1" /> Approve
                         </Button>

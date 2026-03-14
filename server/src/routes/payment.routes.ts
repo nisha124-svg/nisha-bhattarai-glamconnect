@@ -55,20 +55,28 @@ router.post('/create-intent', authenticate, async (req: AuthRequest, res: Respon
       });
     }
 
-    // Convert NPR to paisa (smallest unit) for Stripe
+    // Convert to smallest unit for Stripe
+    // Note: Stripe test mode doesn't support NPR, so we use USD for processing
+    const stripeCurrency = 'usd';
     const amountInSmallestUnit = Math.round(amount * 100);
 
-    // Create payment intent
+    // Create and auto-confirm payment intent with test card (for FYP demo)
     const paymentIntent = await stripe.paymentIntents.create({
       amount: amountInSmallestUnit,
-      currency: currency.toLowerCase(),
+      currency: stripeCurrency,
       metadata: {
         appointmentId: appointmentId || '',
         userId: req.userId,
         userEmail: user.email
       },
       receipt_email: user.email,
-      description: `GlamConnect Appointment Payment${appointmentId ? ` - ${appointmentId}` : ''}`
+      description: `GlamConnect Appointment Payment${appointmentId ? ` - ${appointmentId}` : ''}`,
+      payment_method: 'pm_card_visa', // Stripe test card for demo
+      confirm: true,
+      automatic_payment_methods: {
+        enabled: true,
+        allow_redirects: 'never'
+      },
     });
 
     res.json({
@@ -124,7 +132,7 @@ router.post('/confirm', authenticate, async (req: AuthRequest, res: Response) =>
     // Retrieve the payment intent from Stripe
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
 
-    if (paymentIntent.status === 'succeeded') {
+    if (paymentIntent.status === 'succeeded' || paymentIntent.status === 'requires_capture') {
       // Update appointment if provided
       if (appointmentId) {
         await prisma.appointment.update({
@@ -142,6 +150,35 @@ router.post('/confirm', authenticate, async (req: AuthRequest, res: Response) =>
         amount: paymentIntent.amount / 100,
         currency: paymentIntent.currency
       });
+    } else if (paymentIntent.status === 'requires_payment_method' || paymentIntent.status === 'requires_confirmation') {
+      // Try to confirm it server-side (test/demo mode)
+      try {
+        const confirmed = await stripe.paymentIntents.confirm(paymentIntentId, {
+          payment_method: 'pm_card_visa', // Stripe test card
+        });
+        
+        if (appointmentId) {
+          await prisma.appointment.update({
+            where: { id: appointmentId },
+            data: { status: 'CONFIRMED' }
+          });
+        }
+
+        res.json({
+          success: true,
+          paymentId: confirmed.id,
+          status: confirmed.status,
+          amount: confirmed.amount / 100,
+          currency: confirmed.currency
+        });
+      } catch (confirmError: any) {
+        console.error('Auto-confirm failed:', confirmError.message);
+        res.status(400).json({
+          success: false,
+          status: paymentIntent.status,
+          message: 'Payment requires manual confirmation. Please try Pay at Salon.'
+        });
+      }
     } else {
       res.status(400).json({
         success: false,
@@ -301,6 +338,81 @@ router.post('/webhook', async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('Webhook error:', error.message);
     res.status(400).json({ error: `Webhook Error: ${error.message}` });
+  }
+});
+
+/**
+ * Get digital receipt/invoice for an appointment
+ * GET /api/payments/receipt/:appointmentId
+ */
+router.get('/receipt/:appointmentId', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: req.params.appointmentId },
+      include: {
+        salon: { select: { name: true, address: true, image: true } },
+        service: { select: { name: true, duration: true, price: true, category: true } },
+        stylist: { select: { name: true, role: true } },
+        user: { select: { name: true, email: true, phone: true } },
+      }
+    });
+
+    if (!appointment) {
+      return res.status(404).json({ message: 'Appointment not found' });
+    }
+
+    // Only the booking customer or salon owner can view the receipt
+    if (appointment.userId !== req.userId) {
+      const salon = await prisma.salon.findUnique({ where: { id: appointment.salonId } });
+      if (!salon || salon.ownerId !== req.userId) {
+        return res.status(403).json({ message: 'Not authorized to view this receipt' });
+      }
+    }
+
+    // Build receipt data
+    const receipt = {
+      receiptNumber: `GC-${appointment.id.slice(0, 8).toUpperCase()}`,
+      invoiceDate: appointment.createdAt,
+      appointmentDate: appointment.date,
+      status: appointment.status,
+      customer: {
+        name: appointment.user.name,
+        email: appointment.user.email,
+        phone: appointment.user.phone,
+      },
+      salon: {
+        name: appointment.salon.name,
+        address: appointment.salon.address,
+      },
+      service: {
+        name: appointment.service.name,
+        category: appointment.service.category,
+        duration: appointment.service.duration,
+        price: appointment.service.price,
+      },
+      stylist: {
+        name: appointment.stylist.name,
+        role: appointment.stylist.role,
+      },
+      payment: {
+        method: (appointment as any).paymentMethod || 'PAY_AT_SALON',
+        status: (appointment as any).paymentStatus || 'PENDING',
+        paymentIntentId: (appointment as any).paymentIntentId || null,
+        subtotal: appointment.service.price,
+        loyaltyPointsUsed: (appointment as any).loyaltyPointsUsed || 0,
+        loyaltyDiscount: (appointment as any).loyaltyDiscount || 0,
+        totalPaid: appointment.price,
+      },
+    };
+
+    res.json(receipt);
+  } catch (error) {
+    console.error('Error generating receipt:', error);
+    res.status(500).json({ message: 'Error generating receipt' });
   }
 });
 

@@ -44,3 +44,53 @@ export const sendBookingConfirmation = async (to: string, bookingDetails: any) =
         console.error('Error sending email:', error);
     }
 };
+
+export const sendOwnerApplicationDecision = async (
+    to: string,
+    payload: { ownerName: string; approved: boolean; reason?: string }
+) => {
+    const { ownerName, approved, reason } = payload;
+
+    const subject = approved
+        ? 'Salon Owner Application Approved - GlamConnect'
+        : 'Salon Owner Application Update - GlamConnect';
+
+    const html = approved
+        ? `
+      <div style="font-family: Arial, sans-serif; color: #333;">
+        <h1 style="color: #16a34a;">Application Approved</h1>
+        <p>Hi ${ownerName},</p>
+        <p>Your salon owner application has been approved by our admin team.</p>
+        <p>You can now log in to your GlamConnect account and complete your salon setup.</p>
+        <p>Thank you,<br/>The GlamConnect Team</p>
+      </div>
+    `
+        : `
+      <div style="font-family: Arial, sans-serif; color: #333;">
+        <h1 style="color: #dc2626;">Application Rejected</h1>
+        <p>Hi ${ownerName},</p>
+        <p>We reviewed your salon owner application, but it was not approved at this time.</p>
+        <p><strong>Reason:</strong> ${reason || 'Please contact support for details.'}</p>
+        <p>You can update your documents and reapply later.</p>
+        <p>Regards,<br/>The GlamConnect Team</p>
+      </div>
+    `;
+
+    try {
+        if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+            console.log('Email credentials not found. Skipping owner decision email sending.');
+            console.log('Would have sent owner decision email to:', to);
+            return;
+        }
+
+        await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to,
+            subject,
+            html,
+        });
+        console.log('Owner application decision email sent to:', to);
+    } catch (error) {
+        console.error('Error sending owner decision email:', error);
+    }
+};
