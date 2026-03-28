@@ -9,7 +9,7 @@
     "scripts": {
         "start": "node dist/index.js",
         "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-        "build": "npx prisma generate && tsc",
+        "build": "npx prisma generate && npx tsc",
         "postinstall": "npx prisma generate",
         "seed": "ts-node src/seed.ts"
     },
@@ -25,9 +25,11 @@
         "jsonwebtoken": "^9.0.2",
         "multer": "^2.1.1",
         "nodemailer": "^6.9.11",
+        "prisma": "^5.10.2",
         "socket.io": "^4.7.4",
         "stripe": "^14.19.0",
-        "twilio": "^4.23.0"
+        "twilio": "^4.23.0",
+        "typescript": "^5.3.3"
     },
     "devDependencies": {
         "@types/bcryptjs": "^2.4.6",
@@ -37,9 +39,7 @@
         "@types/multer": "^2.1.0",
         "@types/node": "^20.11.24",
         "@types/nodemailer": "^6.4.14",
-        "prisma": "^5.10.2",
         "ts-node": "^10.9.2",
-        "ts-node-dev": "^2.0.0",
-        "typescript": "^5.3.3"
+        "ts-node-dev": "^2.0.0"
     }
 }
