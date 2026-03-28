@@ -22,7 +22,7 @@ if (stripeSecretKey && stripeSecretKey.length > 10) {
  */
 router.post('/create-intent', authenticate, async (req: AuthRequest, res: Response) => {
   try {
-    const { appointmentId, amount, currency = 'npr' } = req.body;
+    const { appointmentId, amount, currency = 'npr', cardNumber, expMonth, expYear, cvc } = req.body;
 
     if (!amount || amount <= 0) {
       return res.status(400).json({ message: 'Valid amount is required' });
@@ -55,12 +55,37 @@ router.post('/create-intent', authenticate, async (req: AuthRequest, res: Respon
       });
     }
 
+    // Validate card details are provided
+    if (!cardNumber || !expMonth || !expYear || !cvc) {
+      return res.status(400).json({ message: 'Card details are required for online payment' });
+    }
+
+    // Create a PaymentMethod from the user's actual card details
+    let paymentMethod: Stripe.PaymentMethod;
+    try {
+      paymentMethod = await stripe.paymentMethods.create({
+        type: 'card',
+        card: {
+          number: cardNumber,
+          exp_month: parseInt(expMonth, 10),
+          exp_year: parseInt(expYear, 10),
+          cvc: cvc,
+        },
+      });
+    } catch (cardError: any) {
+      console.error('Card validation failed:', cardError.message);
+      return res.status(400).json({
+        message: 'Invalid card details. Please check your card information.',
+        error: cardError.message
+      });
+    }
+
     // Convert to smallest unit for Stripe
     // Note: Stripe test mode doesn't support NPR, so we use USD for processing
     const stripeCurrency = 'usd';
     const amountInSmallestUnit = Math.round(amount * 100);
 
-    // Create and auto-confirm payment intent with test card (for FYP demo)
+    // Create and confirm payment intent with the user's actual card
     const paymentIntent = await stripe.paymentIntents.create({
       amount: amountInSmallestUnit,
       currency: stripeCurrency,
@@ -71,7 +96,7 @@ router.post('/create-intent', authenticate, async (req: AuthRequest, res: Respon
       },
       receipt_email: user.email,
       description: `GlamConnect Appointment Payment${appointmentId ? ` - ${appointmentId}` : ''}`,
-      payment_method: 'pm_card_visa', // Stripe test card for demo
+      payment_method: paymentMethod.id,
       confirm: true,
       automatic_payment_methods: {
         enabled: true,
@@ -79,15 +104,42 @@ router.post('/create-intent', authenticate, async (req: AuthRequest, res: Respon
       },
     });
 
-    res.json({
-      clientSecret: paymentIntent.client_secret,
-      paymentIntentId: paymentIntent.id,
-      amount: paymentIntent.amount / 100,
-      currency: paymentIntent.currency,
-      status: paymentIntent.status
-    });
+    // Check if payment actually succeeded
+    if (paymentIntent.status === 'succeeded') {
+      res.json({
+        clientSecret: paymentIntent.client_secret,
+        paymentIntentId: paymentIntent.id,
+        amount: paymentIntent.amount / 100,
+        currency: paymentIntent.currency,
+        status: paymentIntent.status
+      });
+    } else if (paymentIntent.status === 'requires_action') {
+      // 3D Secure authentication required
+      res.json({
+        clientSecret: paymentIntent.client_secret,
+        paymentIntentId: paymentIntent.id,
+        amount: paymentIntent.amount / 100,
+        currency: paymentIntent.currency,
+        status: paymentIntent.status,
+        requiresAction: true,
+        message: 'This card requires additional authentication. Please try a different card or pay at salon.'
+      });
+    } else {
+      // Payment failed for another reason
+      res.status(400).json({
+        message: 'Payment was not successful. Please try a different card.',
+        status: paymentIntent.status
+      });
+    }
   } catch (error: any) {
     console.error('Error creating payment intent:', error);
+    // Handle Stripe card decline errors specifically
+    if (error.type === 'StripeCardError') {
+      return res.status(400).json({
+        message: error.message || 'Your card was declined. Please try a different card.',
+        error: error.decline_code || error.code
+      });
+    }
     res.status(500).json({ 
       message: 'Error creating payment. Please try again.',
       error: error.message 
@@ -133,7 +185,7 @@ router.post('/confirm', authenticate, async (req: AuthRequest, res: Response) =>
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
 
     if (paymentIntent.status === 'succeeded' || paymentIntent.status === 'requires_capture') {
-      // Update appointment if provided
+      // Payment succeeded - update appointment
       if (appointmentId) {
         await prisma.appointment.update({
           where: { id: appointmentId },
@@ -150,40 +202,14 @@ router.post('/confirm', authenticate, async (req: AuthRequest, res: Response) =>
         amount: paymentIntent.amount / 100,
         currency: paymentIntent.currency
       });
-    } else if (paymentIntent.status === 'requires_payment_method' || paymentIntent.status === 'requires_confirmation') {
-      // Try to confirm it server-side (test/demo mode)
-      try {
-        const confirmed = await stripe.paymentIntents.confirm(paymentIntentId, {
-          payment_method: 'pm_card_visa', // Stripe test card
-        });
-        
-        if (appointmentId) {
-          await prisma.appointment.update({
-            where: { id: appointmentId },
-            data: { status: 'CONFIRMED' }
-          });
-        }
-
-        res.json({
-          success: true,
-          paymentId: confirmed.id,
-          status: confirmed.status,
-          amount: confirmed.amount / 100,
-          currency: confirmed.currency
-        });
-      } catch (confirmError: any) {
-        console.error('Auto-confirm failed:', confirmError.message);
-        res.status(400).json({
-          success: false,
-          status: paymentIntent.status,
-          message: 'Payment requires manual confirmation. Please try Pay at Salon.'
-        });
-      }
     } else {
+      // Payment did not succeed - do NOT create the booking
       res.status(400).json({
         success: false,
         status: paymentIntent.status,
-        message: 'Payment not completed'
+        message: paymentIntent.status === 'requires_action'
+          ? 'This card requires additional authentication. Please try a different card or pay at salon.'
+          : 'Payment was not successful. Please try a different card or pay at salon.'
       });
     }
   } catch (error: any) {

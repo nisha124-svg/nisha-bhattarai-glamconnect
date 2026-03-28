@@ -254,14 +254,51 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
       const finalTotal = calculateTotal();
       let paymentIntentId: string | null = null;
 
-      // If paying online, create and confirm a payment intent
+      // If paying online, create and confirm a payment intent with actual card details
       if (paymentMethod === 'ONLINE') {
         setPaymentProcessing(true);
-        const intentRes = await payments.createIntent({ amount: finalTotal });
+
+        // Parse expiry date (MM/YY) into month and year
+        const [expMonth, expYearShort] = expiryDate.split('/');
+        const expYear = `20${expYearShort}`; // Convert YY to YYYY
+        const rawCardNumber = cardNumber.replace(/\s/g, ''); // Remove spaces
+
+        // Send actual card details to backend for Stripe PaymentMethod creation
+        const intentRes = await payments.createIntent({
+          amount: finalTotal,
+          cardNumber: rawCardNumber,
+          expMonth,
+          expYear,
+          cvc: cvv,
+        } as any);
+
+        // Check if payment requires additional action (3D Secure)
+        if (intentRes.data.requiresAction) {
+          setPaymentProcessing(false);
+          setBookingError(intentRes.data.message || 'This card requires additional authentication. Please try a different card or pay at salon.');
+          setBookingLoading(false);
+          return;
+        }
+
+        // Check if payment was successful
+        if (intentRes.data.status !== 'succeeded') {
+          setPaymentProcessing(false);
+          setBookingError(intentRes.data.message || 'Payment was not successful. Please try a different card.');
+          setBookingLoading(false);
+          return;
+        }
+
         paymentIntentId = intentRes.data.paymentIntentId;
 
-        // Confirm payment (in demo mode this succeeds immediately)
-        await payments.confirm({ paymentIntentId });
+        // Confirm payment status
+        const confirmRes = await payments.confirm({ paymentIntentId });
+        if (!confirmRes.data.success) {
+          setPaymentProcessing(false);
+          setBookingError(confirmRes.data.message || 'Payment confirmation failed. Please try again.');
+          setBookingLoading(false);
+          return;
+        }
+
         setPaymentSuccess(true);
         setPaymentProcessing(false);
       }
