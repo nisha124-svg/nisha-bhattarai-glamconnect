@@ -190,7 +190,15 @@ export const admin = {
 
 // Payment API
 export const payments = {
-  createIntent: (data: { appointmentId?: string; amount: number; currency?: string }) => 
+  createIntent: (data: {
+    appointmentId?: string;
+    amount: number;
+    currency?: string;
+    cardNumber?: string;
+    expMonth?: string;
+    expYear?: string;
+    cvc?: string;
+  }) => 
     api.post('/payments/create-intent', data),
   confirm: (data: { paymentIntentId: string; appointmentId?: string }) => 
     api.post('/payments/confirm', data),

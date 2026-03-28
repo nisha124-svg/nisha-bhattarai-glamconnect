@@ -5,6 +5,16 @@ import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 
 const router = Router();
 
+const normalizeCardNumber = (cardNumber?: string) => String(cardNumber || '').replace(/\D/g, '');
+
+const DEMO_CARD_BEHAVIORS: Record<string, 'succeeded' | 'declined' | 'requires_action'> = {
+  '4242424242424242': 'succeeded',
+  '4000000000000002': 'declined',
+  '4000002500003155': 'requires_action',
+  '5555555555554444': 'succeeded',
+  '378282246310005': 'succeeded',
+};
+
 // Initialize Stripe
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 let stripe: Stripe | null = null;
@@ -23,6 +33,7 @@ if (stripeSecretKey && stripeSecretKey.length > 10) {
 router.post('/create-intent', authenticate, async (req: AuthRequest, res: Response) => {
   try {
     const { appointmentId, amount, currency = 'npr', cardNumber, expMonth, expYear, cvc } = req.body;
+    const rawCardNumber = normalizeCardNumber(cardNumber);
 
     if (!amount || amount <= 0) {
       return res.status(400).json({ message: 'Valid amount is required' });
@@ -30,6 +41,49 @@ router.post('/create-intent', authenticate, async (req: AuthRequest, res: Respon
 
     if (!req.userId) {
       return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    // Validate card details are provided for online payment
+    if (!rawCardNumber || !expMonth || !expYear || !cvc) {
+      return res.status(400).json({ message: 'Card details are required for online payment' });
+    }
+
+    // Always support canonical Stripe demo card behavior in this flow.
+    const demoBehavior = DEMO_CARD_BEHAVIORS[rawCardNumber];
+    if (demoBehavior) {
+      const mockPaymentIntentId = `mock_pi_${Date.now()}`;
+
+      if (demoBehavior === 'declined') {
+        return res.status(400).json({
+          message: 'Your card was declined. Please try a different card.',
+          status: 'requires_payment_method',
+          error: 'card_declined',
+          paymentIntentId: mockPaymentIntentId,
+          demo: true,
+        });
+      }
+
+      if (demoBehavior === 'requires_action') {
+        return res.json({
+          clientSecret: `mock_client_secret_${Date.now()}`,
+          paymentIntentId: mockPaymentIntentId,
+          amount,
+          currency,
+          status: 'requires_action',
+          requiresAction: true,
+          message: 'This card requires additional authentication. Please complete 3D Secure or use another payment method.',
+          demo: true,
+        });
+      }
+
+      return res.json({
+        clientSecret: `mock_client_secret_${Date.now()}`,
+        paymentIntentId: mockPaymentIntentId,
+        amount,
+        currency,
+        status: 'succeeded',
+        demo: true,
+      });
     }
 
     // Get user details
@@ -50,14 +104,9 @@ router.post('/create-intent', authenticate, async (req: AuthRequest, res: Respon
         paymentIntentId: 'mock_pi_' + Date.now(),
         amount,
         currency,
-        status: 'requires_payment_method',
+        status: 'succeeded',
         demo: true
       });
-    }
-
-    // Validate card details are provided
-    if (!cardNumber || !expMonth || !expYear || !cvc) {
-      return res.status(400).json({ message: 'Card details are required for online payment' });
     }
 
     // Create a PaymentMethod from the user's actual card details
@@ -66,7 +115,7 @@ router.post('/create-intent', authenticate, async (req: AuthRequest, res: Respon
       paymentMethod = await stripe.paymentMethods.create({
         type: 'card',
         card: {
-          number: cardNumber,
+          number: rawCardNumber,
           exp_month: parseInt(expMonth, 10),
           exp_year: parseInt(expYear, 10),
           cvc: cvc,

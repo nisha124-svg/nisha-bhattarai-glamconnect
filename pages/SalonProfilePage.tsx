@@ -270,7 +270,7 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
           expMonth,
           expYear,
           cvc: cvv,
-        } as any);
+        });
 
         // Check if payment requires additional action (3D Secure)
         if (intentRes.data.requiresAction) {
@@ -376,7 +376,7 @@ export const SalonProfilePage: React.FC<SalonProfilePageProps> = ({ salon, onBac
     const rawCardNumber = cardNumber.replace(/\s/g, '');
     return (
       cardholderName.trim().length >= 2 &&
-      /^\d{16}$/.test(rawCardNumber) &&
+      /^\d{15,16}$/.test(rawCardNumber) &&
       /^(0[1-9]|1[0-2])\/\d{2}$/.test(expiryDate) &&
       /^\d{3,4}$/.test(cvv)
     );
