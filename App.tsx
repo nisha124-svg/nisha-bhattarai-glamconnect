@@ -19,8 +19,9 @@ import { CheckCircle } from 'lucide-react';
 import { Button } from './components/Button';
 import { io } from 'socket.io-client';
 import { Toaster, toast } from 'sonner';
+import { SOCKET_URL } from './api/config';
 
-const socket = io('http://localhost:5000');
+const socket = io(SOCKET_URL);
 
 const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<PageView>(PageView.LANDING);

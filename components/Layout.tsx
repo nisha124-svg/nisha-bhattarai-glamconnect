@@ -4,6 +4,7 @@ import { PageView } from '../types';
 import { notifications as notificationsApi } from '../api/client';
 import { io, Socket } from 'socket.io-client';
 import { SalonChat } from './SalonChat';
+import { SOCKET_URL } from '../api/config';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -59,7 +60,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, setCurrentPage, curren
     fetchNotifications();
 
     // Connect socket for real-time notifications
-    const socket = io('http://localhost:5000');
+    const socket = io(SOCKET_URL);
     socketRef.current = socket;
 
     if (user.id) {

@@ -7,10 +7,20 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Environment files (contain secrets)
+.env
+.env.local
+.env.production
+
 node_modules
 dist
 dist-ssr
 *.local
+
+# Server build output
+server/dist
+server/node_modules
+server/uploads
 
 # Editor directories and files
 .vscode/*

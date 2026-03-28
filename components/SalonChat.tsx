@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MessageCircle, Send, X, Loader2, ArrowLeft } from 'lucide-react';
 import { chat } from '../api/client';
 import { io, Socket } from 'socket.io-client';
+import { SOCKET_URL } from '../api/config';
 
 interface ChatMessage {
   id: string;
@@ -38,7 +39,7 @@ export const SalonChat: React.FC<SalonChatProps> = ({ salonId, salonName, onClos
 
   useEffect(() => {
     // Connect socket
-    socketRef.current = io('http://localhost:5000');
+    socketRef.current = io(SOCKET_URL);
     const socket = socketRef.current;
 
     // Join rooms
