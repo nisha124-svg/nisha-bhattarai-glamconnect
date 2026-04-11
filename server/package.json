@@ -11,7 +11,20 @@
         "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
         "build": "npx prisma generate && npx tsc",
         "postinstall": "npx prisma generate",
-        "seed": "ts-node src/seed.ts"
+        "seed": "ts-node src/seed.ts",
+        "test:unit": "vitest run tests/unit --reporter=verbose",
+        "ut-01": "vitest run tests/unit/ut-01-jwt-generation.test.ts --reporter=verbose",
+        "ut-02": "vitest run tests/unit/ut-02-jwt-verification-valid.test.ts --reporter=verbose",
+        "ut-03": "vitest run tests/unit/ut-03-jwt-verification-expired.test.ts --reporter=verbose",
+        "ut-04": "vitest run tests/unit/ut-04-bcrypt-hash.test.ts --reporter=verbose",
+        "ut-05": "vitest run tests/unit/ut-05-bcrypt-compare-correct.test.ts --reporter=verbose",
+        "ut-06": "vitest run tests/unit/ut-06-bcrypt-compare-incorrect.test.ts --reporter=verbose",
+        "ut-07": "vitest run tests/unit/ut-07-booking-no-conflict.test.ts --reporter=verbose",
+        "ut-08": "vitest run tests/unit/ut-08-booking-slot-taken.test.ts --reporter=verbose",
+        "ut-09": "vitest run tests/unit/ut-09-review-eligible.test.ts --reporter=verbose",
+        "ut-10": "vitest run tests/unit/ut-10-review-not-eligible.test.ts --reporter=verbose",
+        "ut-11": "vitest run tests/unit/ut-11-rating-aggregate.test.ts --reporter=verbose",
+        "ut-12": "vitest run tests/unit/ut-12-stripe-payment-intent.test.ts --reporter=verbose"
     },
     "prisma": {
         "seed": "ts-node src/seed.ts"
@@ -39,5 +52,8 @@
         "ts-node-dev": "^2.0.0",
         "twilio": "^4.23.0",
         "typescript": "^5.3.3"
+    },
+    "devDependencies": {
+        "vitest": "^2.1.8"
     }
 }

@@ -2,18 +2,9 @@ import { Router, Request, Response } from 'express';
 import Stripe from 'stripe';
 import prisma from '../config/database';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
+import { createDemoPaymentIntent, normalizeCardNumber } from '../utils/payment.utils';
 
 const router = Router();
-
-const normalizeCardNumber = (cardNumber?: string) => String(cardNumber || '').replace(/\D/g, '');
-
-const DEMO_CARD_BEHAVIORS: Record<string, 'succeeded' | 'declined' | 'requires_action'> = {
-  '4242424242424242': 'succeeded',
-  '4000000000000002': 'declined',
-  '4000002500003155': 'requires_action',
-  '5555555555554444': 'succeeded',
-  '378282246310005': 'succeeded',
-};
 
 // Initialize Stripe
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
@@ -49,41 +40,12 @@ router.post('/create-intent', authenticate, async (req: AuthRequest, res: Respon
     }
 
     // Always support canonical Stripe demo card behavior in this flow.
-    const demoBehavior = DEMO_CARD_BEHAVIORS[rawCardNumber];
-    if (demoBehavior) {
-      const mockPaymentIntentId = `mock_pi_${Date.now()}`;
-
-      if (demoBehavior === 'declined') {
-        return res.status(400).json({
-          message: 'Your card was declined. Please try a different card.',
-          status: 'requires_payment_method',
-          error: 'card_declined',
-          paymentIntentId: mockPaymentIntentId,
-          demo: true,
-        });
+    const demoPaymentIntent = createDemoPaymentIntent(rawCardNumber, amount, currency);
+    if (demoPaymentIntent) {
+      if (demoPaymentIntent.status === 'requires_payment_method') {
+        return res.status(400).json(demoPaymentIntent);
       }
-
-      if (demoBehavior === 'requires_action') {
-        return res.json({
-          clientSecret: `mock_client_secret_${Date.now()}`,
-          paymentIntentId: mockPaymentIntentId,
-          amount,
-          currency,
-          status: 'requires_action',
-          requiresAction: true,
-          message: 'This card requires additional authentication. Please complete 3D Secure or use another payment method.',
-          demo: true,
-        });
-      }
-
-      return res.json({
-        clientSecret: `mock_client_secret_${Date.now()}`,
-        paymentIntentId: mockPaymentIntentId,
-        amount,
-        currency,
-        status: 'succeeded',
-        demo: true,
-      });
+      return res.json(demoPaymentIntent);
     }
 
     // Get user details

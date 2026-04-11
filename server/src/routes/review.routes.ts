@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import prisma from '../config/database';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
+import { calculateAverageRatingToOneDecimal, isReviewEligibleFromCompletedBooking } from '../utils/business-rules.utils';
 
 const router = Router();
 
@@ -160,12 +161,12 @@ router.post('/:salonId', authenticate, async (req: AuthRequest, res: Response) =
       where: { salonId },
       select: { rating: true },
     });
-    const avgRating = allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length;
+    const avgRating = calculateAverageRatingToOneDecimal(allReviews.map((r) => r.rating));
 
     await prisma.salon.update({
       where: { id: salonId },
       data: {
-        rating: Math.round(avgRating * 10) / 10,
+        rating: avgRating,
         reviewCount: allReviews.length,
       },
     });
@@ -227,11 +228,11 @@ router.put('/:reviewId', authenticate, async (req: AuthRequest, res: Response) =
       where: { salonId: review.salonId },
       select: { rating: true },
     });
-    const avgRating = allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length;
+    const avgRating = calculateAverageRatingToOneDecimal(allReviews.map((r) => r.rating));
 
     await prisma.salon.update({
       where: { id: review.salonId },
-      data: { rating: Math.round(avgRating * 10) / 10 },
+      data: { rating: avgRating },
     });
 
     res.json(updated);
@@ -264,11 +265,11 @@ router.delete('/:reviewId', authenticate, async (req: AuthRequest, res: Response
     });
 
     if (allReviews.length > 0) {
-      const avgRating = allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length;
+      const avgRating = calculateAverageRatingToOneDecimal(allReviews.map((r) => r.rating));
       await prisma.salon.update({
         where: { id: review.salonId },
         data: {
-          rating: Math.round(avgRating * 10) / 10,
+          rating: avgRating,
           reviewCount: allReviews.length,
         },
       });
@@ -313,9 +314,11 @@ router.get('/:salonId/can-review', authenticate, async (req: AuthRequest, res: R
       include: { service: true },
     });
 
+    const hasCompletedBooking = isReviewEligibleFromCompletedBooking(completedBooking);
+
     res.json({
-      canReview: true,
-      hasCompletedBooking: !!completedBooking,
+      canReview: hasCompletedBooking,
+      hasCompletedBooking,
       completedBooking: completedBooking ? {
         id: completedBooking.id,
         serviceName: completedBooking.service.name,

@@ -3,6 +3,7 @@ import prisma from '../config/database';
 import { sendBookingConfirmation } from '../services/email.service';
 import { sendBookingSMS, sendCancellationSMS, sendRescheduleSMS } from '../services/sms.service';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
+import { getInitialBookingStatus } from '../utils/business-rules.utils';
 
 const router = Router();
 
@@ -48,7 +49,7 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
 
     // Check if salon has auto-accept enabled and slot is available
     let initialStatus: 'PENDING' | 'CONFIRMED' = 'PENDING';
-    
+
     if (salon.autoAcceptBookings) {
       // Check if the time slot is free for the stylist
       const conflicting = await prisma.appointment.findFirst({
@@ -58,9 +59,7 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
           status: { notIn: ['CANCELLED', 'REJECTED'] }
         }
       });
-      if (!conflicting) {
-        initialStatus = 'CONFIRMED';
-      }
+      initialStatus = getInitialBookingStatus(salon.autoAcceptBookings, conflicting);
     }
 
     // Create appointment
