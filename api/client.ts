@@ -186,6 +186,14 @@ export const admin = {
   // Settings
   getSettings: () => api.get('/admin/settings'),
   updateSettings: (settings: any) => api.put('/admin/settings', settings),
+
+  // Reports (CSV download)
+  downloadSalesReport: (params?: { startDate?: string; endDate?: string }) =>
+    api.get('/admin/reports/sales', { params, responseType: 'blob' }),
+  downloadUsersReport: (params?: { startDate?: string; endDate?: string }) =>
+    api.get('/admin/reports/users', { params, responseType: 'blob' }),
+  downloadSalonsReport: (params?: { startDate?: string; endDate?: string }) =>
+    api.get('/admin/reports/salons', { params, responseType: 'blob' }),
 };
 
 // Payment API

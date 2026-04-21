@@ -492,6 +492,229 @@ router.delete('/users/:id', authMiddleware, adminOnly, async (req: Request, res:
   }
 });
 
+// ---------- Reports (CSV export) ----------
+
+const escapeCsv = (value: unknown): string => {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  if (/[",\n\r]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+};
+
+const toCsv = (rows: Array<Record<string, unknown>>, headers: string[]): string => {
+  const headerLine = headers.map(escapeCsv).join(',');
+  const bodyLines = rows.map(row => headers.map(h => escapeCsv(row[h])).join(','));
+  return [headerLine, ...bodyLines].join('\r\n');
+};
+
+const parseDateRange = (req: Request) => {
+  const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+  const range: { gte?: Date; lte?: Date } = {};
+  if (startDate) {
+    const d = new Date(startDate);
+    if (!isNaN(d.getTime())) range.gte = d;
+  }
+  if (endDate) {
+    const d = new Date(endDate);
+    if (!isNaN(d.getTime())) {
+      d.setHours(23, 59, 59, 999);
+      range.lte = d;
+    }
+  }
+  return range;
+};
+
+const sendCsv = (res: Response, filename: string, csv: string) => {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  // BOM so Excel opens UTF-8 correctly
+  res.status(200).send('﻿' + csv);
+};
+
+// Sales / Revenue report
+router.get('/reports/sales', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const dateRange = parseDateRange(req);
+    const where: any = { status: 'COMPLETED' };
+    if (dateRange.gte || dateRange.lte) where.date = dateRange;
+
+    const appointments = await prisma.appointment.findMany({
+      where,
+      include: {
+        user: { select: { name: true, email: true } },
+        salon: { select: { name: true } },
+        service: { select: { name: true, category: true } },
+        stylist: { select: { name: true } },
+      },
+      orderBy: { date: 'desc' },
+    });
+
+    const totalRevenue = appointments.reduce((sum, a) => sum + (a.price || 0), 0);
+    const totalLoyaltyDiscount = appointments.reduce((sum, a) => sum + (a.loyaltyDiscount || 0), 0);
+
+    const headers = [
+      'Booking ID', 'Date', 'Customer', 'Customer Email', 'Salon', 'Service',
+      'Category', 'Stylist', 'Price (NPR)', 'Loyalty Discount (NPR)',
+      'Payment Method', 'Payment Status',
+    ];
+    const rows = appointments.map(a => ({
+      'Booking ID': a.id,
+      'Date': a.date.toISOString(),
+      'Customer': a.user?.name || '',
+      'Customer Email': a.user?.email || '',
+      'Salon': a.salon?.name || '',
+      'Service': a.service?.name || '',
+      'Category': a.service?.category || '',
+      'Stylist': a.stylist?.name || '',
+      'Price (NPR)': (a.price || 0).toFixed(2),
+      'Loyalty Discount (NPR)': (a.loyaltyDiscount || 0).toFixed(2),
+      'Payment Method': a.paymentMethod,
+      'Payment Status': a.paymentStatus,
+    }));
+
+    const summary = [
+      '',
+      `Total Completed Bookings,${appointments.length}`,
+      `Total Revenue (NPR),${totalRevenue.toFixed(2)}`,
+      `Total Loyalty Discount (NPR),${totalLoyaltyDiscount.toFixed(2)}`,
+    ].join('\r\n');
+
+    const csv = toCsv(rows, headers) + '\r\n' + summary;
+    const today = new Date().toISOString().slice(0, 10);
+    sendCsv(res, `sales-report-${today}.csv`, csv);
+  } catch (error) {
+    console.error('Error generating sales report:', error);
+    res.status(500).json({ message: 'Error generating sales report' });
+  }
+});
+
+// User activity report
+router.get('/reports/users', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const dateRange = parseDateRange(req);
+    const where: any = {};
+    if (dateRange.gte || dateRange.lte) where.createdAt = dateRange;
+
+    const users = await prisma.user.findMany({
+      where,
+      include: {
+        _count: { select: { appointments: true, reviews: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const headers = [
+      'User ID', 'Name', 'Email', 'Phone', 'Role', 'Approved',
+      'Total Bookings', 'Reviews', 'Loyalty Points', 'Total Spent (NPR)',
+      'Membership Tier', 'Joined',
+    ];
+    const rows = users.map(u => ({
+      'User ID': u.id,
+      'Name': u.name,
+      'Email': u.email,
+      'Phone': u.phone || '',
+      'Role': u.role,
+      'Approved': u.isApproved ? 'Yes' : 'No',
+      'Total Bookings': u._count.appointments,
+      'Reviews': u._count.reviews,
+      'Loyalty Points': u.loyaltyPoints,
+      'Total Spent (NPR)': (u.totalSpent || 0).toFixed(2),
+      'Membership Tier': u.membershipTier,
+      'Joined': u.createdAt.toISOString(),
+    }));
+
+    const summary = [
+      '',
+      `Total Users,${users.length}`,
+      `Customers,${users.filter(u => u.role === 'USER').length}`,
+      `Salon Owners,${users.filter(u => u.role === 'SALON_OWNER').length}`,
+      `Admins,${users.filter(u => u.role === 'ADMIN').length}`,
+    ].join('\r\n');
+
+    const csv = toCsv(rows, headers) + '\r\n' + summary;
+    const today = new Date().toISOString().slice(0, 10);
+    sendCsv(res, `user-activity-report-${today}.csv`, csv);
+  } catch (error) {
+    console.error('Error generating user report:', error);
+    res.status(500).json({ message: 'Error generating user report' });
+  }
+});
+
+// Salon performance report
+router.get('/reports/salons', authMiddleware, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const dateRange = parseDateRange(req);
+
+    const salons = await prisma.salon.findMany({
+      include: {
+        owner: { select: { name: true, email: true } },
+        _count: { select: { appointments: true, reviews: true, services: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const apptWhere: any = {};
+    if (dateRange.gte || dateRange.lte) apptWhere.date = dateRange;
+
+    const salonData = await Promise.all(salons.map(async (salon) => {
+      const [completed, cancelled, allAppointments] = await Promise.all([
+        prisma.appointment.findMany({
+          where: { ...apptWhere, salonId: salon.id, status: 'COMPLETED' },
+          select: { price: true },
+        }),
+        prisma.appointment.count({
+          where: { ...apptWhere, salonId: salon.id, status: 'CANCELLED' },
+        }),
+        prisma.appointment.count({
+          where: { ...apptWhere, salonId: salon.id },
+        }),
+      ]);
+      const revenue = completed.reduce((sum, a) => sum + (a.price || 0), 0);
+      return { salon, completedCount: completed.length, cancelled, total: allAppointments, revenue };
+    }));
+
+    const headers = [
+      'Salon ID', 'Name', 'City', 'Owner', 'Owner Email', 'Status',
+      'Rating', 'Review Count', 'Services', 'Total Bookings',
+      'Completed', 'Cancelled', 'Revenue (NPR)', 'Joined',
+    ];
+    const rows = salonData.map(({ salon, completedCount, cancelled, total, revenue }) => ({
+      'Salon ID': salon.id,
+      'Name': salon.name,
+      'City': salon.city || '',
+      'Owner': salon.owner?.name || '',
+      'Owner Email': salon.owner?.email || '',
+      'Status': salon.isVerified ? 'active' : 'pending',
+      'Rating': salon.rating.toFixed(2),
+      'Review Count': salon.reviewCount,
+      'Services': salon._count.services,
+      'Total Bookings': total,
+      'Completed': completedCount,
+      'Cancelled': cancelled,
+      'Revenue (NPR)': revenue.toFixed(2),
+      'Joined': salon.createdAt.toISOString(),
+    }));
+
+    const totalRevenue = salonData.reduce((sum, s) => sum + s.revenue, 0);
+    const summary = [
+      '',
+      `Total Salons,${salons.length}`,
+      `Active,${salons.filter(s => s.isVerified).length}`,
+      `Pending,${salons.filter(s => !s.isVerified).length}`,
+      `Total Revenue (NPR),${totalRevenue.toFixed(2)}`,
+    ].join('\r\n');
+
+    const csv = toCsv(rows, headers) + '\r\n' + summary;
+    const today = new Date().toISOString().slice(0, 10);
+    sendCsv(res, `salon-performance-report-${today}.csv`, csv);
+  } catch (error) {
+    console.error('Error generating salon report:', error);
+    res.status(500).json({ message: 'Error generating salon report' });
+  }
+});
+
 // Delete a salon and all related data (admin only)
 router.delete('/salons/:id', authMiddleware, adminOnly, async (req: Request, res: Response) => {
   try {

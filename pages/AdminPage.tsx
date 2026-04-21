@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   Users, Building2, Calendar, TrendingUp, Settings, Shield,
   Search, MoreVertical, CheckCircle, XCircle, Clock, AlertTriangle, AlertCircle,
-  BarChart3, DollarSign, Star, Eye, Trash2, Edit, Ban, ChevronDown, Loader2, RefreshCw
+  BarChart3, DollarSign, Star, Eye, Trash2, Edit, Ban, ChevronDown, Loader2, RefreshCw,
+  Download
 } from 'lucide-react';
 import { Button } from '../components/Button';
 import { admin } from '../api/client';
@@ -71,6 +72,12 @@ export const AdminPage: React.FC = () => {
   const [salonsLoading, setSalonsLoading] = useState(false);
   const [bookingsLoading, setBookingsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Reports state
+  const [reportLoading, setReportLoading] = useState<'sales' | 'users' | 'salons' | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportStartDate, setReportStartDate] = useState('');
+  const [reportEndDate, setReportEndDate] = useState('');
 
   // Check if user is admin
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
@@ -224,6 +231,52 @@ export const AdminPage: React.FC = () => {
       fetchPendingOwners();
     } catch (error) {
       console.error('Error deleting user:', error);
+    }
+  };
+
+  // Download a report CSV
+  const handleDownloadReport = async (type: 'sales' | 'users' | 'salons') => {
+    try {
+      setReportError(null);
+      setReportLoading(type);
+      const params: { startDate?: string; endDate?: string } = {};
+      if (reportStartDate) params.startDate = reportStartDate;
+      if (reportEndDate) params.endDate = reportEndDate;
+
+      const fn =
+        type === 'sales' ? admin.downloadSalesReport :
+        type === 'users' ? admin.downloadUsersReport :
+        admin.downloadSalonsReport;
+
+      const response = await fn(params);
+
+      const disposition: string = response.headers?.['content-disposition'] || '';
+      const match = disposition.match(/filename="?([^"]+)"?/i);
+      const today = new Date().toISOString().slice(0, 10);
+      const fallback =
+        type === 'sales' ? `sales-report-${today}.csv` :
+        type === 'users' ? `user-activity-report-${today}.csv` :
+        `salon-performance-report-${today}.csv`;
+      const filename = match?.[1] || fallback;
+
+      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error(`Error downloading ${type} report:`, err);
+      setReportError(
+        err?.response?.status === 403
+          ? 'You do not have permission to export reports.'
+          : `Failed to download ${type} report. Please try again.`
+      );
+    } finally {
+      setReportLoading(null);
     }
   };
 
@@ -910,45 +963,142 @@ export const AdminPage: React.FC = () => {
         {/* Reports Tab */}
         {activeTab === 'reports' && (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Summary cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-                <h3 className="font-bold text-gray-900 mb-4">Revenue Overview</h3>
-                <div className="h-64 flex items-center justify-center text-gray-400">
-                  <div className="text-center">
-                    <BarChart3 className="h-12 w-12 mx-auto mb-2" />
-                    <p>Revenue chart would be displayed here</p>
-                    <p className="text-sm">Integration with Recharts available</p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-gray-500 text-sm">Total Revenue</p>
+                    <p className="text-2xl font-bold text-gray-900">NPR {(stats?.totalRevenue || 0).toLocaleString()}</p>
+                  </div>
+                  <div className="bg-green-100 p-3 rounded-full">
+                    <DollarSign className="h-6 w-6 text-green-600" />
                   </div>
                 </div>
+                <p className="text-xs text-gray-500 mt-2">From completed bookings</p>
               </div>
-
               <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-                <h3 className="font-bold text-gray-900 mb-4">User Growth</h3>
-                <div className="h-64 flex items-center justify-center text-gray-400">
-                  <div className="text-center">
-                    <TrendingUp className="h-12 w-12 mx-auto mb-2" />
-                    <p>User growth chart would be displayed here</p>
-                    <p className="text-sm">Integration with Recharts available</p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-gray-500 text-sm">Total Bookings</p>
+                    <p className="text-2xl font-bold text-gray-900">{stats?.totalAppointments || 0}</p>
+                  </div>
+                  <div className="bg-blue-100 p-3 rounded-full">
+                    <Calendar className="h-6 w-6 text-blue-600" />
                   </div>
                 </div>
+                <p className="text-xs text-gray-500 mt-2">All-time bookings</p>
+              </div>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-gray-500 text-sm">Active Salons</p>
+                    <p className="text-2xl font-bold text-gray-900">{stats?.totalSalons || 0}</p>
+                  </div>
+                  <div className="bg-pink-100 p-3 rounded-full">
+                    <Building2 className="h-6 w-6 text-pink-600" />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">On the platform</p>
               </div>
             </div>
 
+            {/* Export reports */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <h3 className="font-bold text-gray-900 mb-4">Quick Reports</h3>
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                <div>
+                  <h3 className="font-bold text-gray-900">Export Reports</h3>
+                  <p className="text-sm text-gray-500">Download sales and activity data as CSV (opens in Excel or Google Sheets).</p>
+                </div>
+                <div className="flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">From</label>
+                    <input
+                      type="date"
+                      value={reportStartDate}
+                      onChange={(e) => setReportStartDate(e.target.value)}
+                      className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">To</label>
+                    <input
+                      type="date"
+                      value={reportEndDate}
+                      onChange={(e) => setReportEndDate(e.target.value)}
+                      className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                    />
+                  </div>
+                  {(reportStartDate || reportEndDate) && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => { setReportStartDate(''); setReportEndDate(''); }}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {reportError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <span>{reportError}</span>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Button variant="outline" className="justify-start">
-                  <DollarSign className="h-4 w-4 mr-2" />
-                  Monthly Revenue Report
-                </Button>
-                <Button variant="outline" className="justify-start">
-                  <Users className="h-4 w-4 mr-2" />
-                  User Activity Report
-                </Button>
-                <Button variant="outline" className="justify-start">
-                  <Building2 className="h-4 w-4 mr-2" />
-                  Salon Performance Report
-                </Button>
+                <button
+                  onClick={() => handleDownloadReport('sales')}
+                  disabled={reportLoading !== null}
+                  className="flex items-start gap-3 p-4 border border-gray-200 rounded-xl hover:border-purple-300 hover:bg-purple-50 transition text-left disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <div className="bg-green-100 p-2 rounded-lg">
+                    <DollarSign className="h-5 w-5 text-green-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-900">Sales Report</p>
+                    <p className="text-xs text-gray-500 mt-1">Completed bookings, revenue, payments</p>
+                  </div>
+                  {reportLoading === 'sales'
+                    ? <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
+                    : <Download className="h-4 w-4 text-gray-400" />}
+                </button>
+
+                <button
+                  onClick={() => handleDownloadReport('users')}
+                  disabled={reportLoading !== null}
+                  className="flex items-start gap-3 p-4 border border-gray-200 rounded-xl hover:border-purple-300 hover:bg-purple-50 transition text-left disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <div className="bg-blue-100 p-2 rounded-lg">
+                    <Users className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-900">User Activity Report</p>
+                    <p className="text-xs text-gray-500 mt-1">Users, roles, bookings, loyalty</p>
+                  </div>
+                  {reportLoading === 'users'
+                    ? <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
+                    : <Download className="h-4 w-4 text-gray-400" />}
+                </button>
+
+                <button
+                  onClick={() => handleDownloadReport('salons')}
+                  disabled={reportLoading !== null}
+                  className="flex items-start gap-3 p-4 border border-gray-200 rounded-xl hover:border-purple-300 hover:bg-purple-50 transition text-left disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <div className="bg-pink-100 p-2 rounded-lg">
+                    <Building2 className="h-5 w-5 text-pink-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-900">Salon Performance</p>
+                    <p className="text-xs text-gray-500 mt-1">Revenue, ratings, bookings by salon</p>
+                  </div>
+                  {reportLoading === 'salons'
+                    ? <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
+                    : <Download className="h-4 w-4 text-gray-400" />}
+                </button>
               </div>
             </div>
           </div>
